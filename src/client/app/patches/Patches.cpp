@@ -22,6 +22,7 @@
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
 #include "shared/local-coop/LocalInput.h"
+#include "shared/local-coop/RenderResize.h"
 #include "shared/ui/input/Input.h"
 #include "shared/ui/renderer/Renderer.h"
 
@@ -305,6 +306,54 @@ void __cdecl HookAspectRatio() {
     // full host frame have different proportions; use the actual camera raster.
     if (game::ScreenWidth() > 0 && game::ScreenHeight() > 0)
         game::Ref<float>(0xC3EFA4) = static_cast<float>(game::ScreenWidth()) / game::ScreenHeight();
+}
+
+VoidFn g_origPostEffectsRender = nullptr;
+local::PostFxResize g_postFxResize;
+local::RenderRaster DescribeRaster(void* raster) {
+    // RwRaster::width/height, RenderWare 3.7 (SA 1.0 US).
+    return {reinterpret_cast<uintptr_t>(raster), raster ? local::RenderSize{
+        game::Field<int32_t>(raster, 0x0C), game::Field<int32_t>(raster, 0x10)} : local::RenderSize{}};
+}
+void __cdecl HookPostEffectsRender() {
+    if (game::Ref<uint8_t>(0xC402CF)) { // CPostEffects::m_bDisableAllPostEffect
+        g_postFxResize.Invalidate();
+        return g_origPostEffectsRender();
+    }
+    void* camera = game::Ref<void*>(0xC1703C); // Scene.m_pRwCamera
+    const auto frame = DescribeRaster(camera ? game::Field<void*>(camera, 0x60) : nullptr);
+    local::RenderSize backBuffer{};
+    auto* device = static_cast<IDirect3DDevice9*>(game::D3DDevice());
+    IDirect3DSurface9* surface = nullptr;
+    if (device && SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &surface)) && surface) {
+        D3DSURFACE_DESC desc{};
+        if (SUCCEEDED(surface->GetDesc(&desc))) backBuffer = {static_cast<int>(desc.Width), static_cast<int>(desc.Height)};
+    }
+    if (surface) surface->Release(); // no outstanding backbuffer reference across a later device reset
+    const bool ready = g_postFxResize.Prepare(reinterpret_cast<uintptr_t>(camera), frame, backBuffer,
+        DescribeRaster(game::Ref<void*>(0xC402D8)), [&] {
+            // WM_SIZE/CameraSize alone does not run this mode-change path. The old
+            // half-screen texture could reject the full-frame copy, then blend its
+            // last picture over the new scene. Rebuild raster, vertices and UVs.
+            // This runs after the native camera update/reset, before Render copies it.
+            game::Call<0x7043D0>(); // CPostEffects::SetupBackBufferVertex (also refreshes screen-dependent filter data)
+            const auto front = DescribeRaster(game::Ref<void*>(0xC402D8));
+            if (front.Covers(frame.size))
+                LOGI("Local post effects refreshed: camera %dx%d, backbuffer %dx%d, effect raster %dx%d",
+                     frame.size.width, frame.size.height, backBuffer.width, backBuffer.height,
+                     front.size.width, front.size.height);
+            return front;
+        });
+    if (!ready) {
+        static uint64_t lastWarning = 0;
+        if (NowMs() - lastWarning > 5000) {
+            lastWarning = NowMs();
+            LOGW("Local post effects deferred: camera %dx%d, backbuffer %dx%d; waiting for valid resize resources",
+                 frame.size.width, frame.size.height, backBuffer.width, backBuffer.height);
+        }
+        return; // retain the freshly rendered scene, never blend stale/undersized data
+    }
+    g_origPostEffectsRender();
 }
 using GetAdapterDisplayModeFn = HRESULT(WINAPI*)(IDirect3D9*, UINT, D3DDISPLAYMODE*);
 using Direct3DCreate9Fn = IDirect3D9*(WINAPI*)(UINT);
@@ -954,6 +1003,11 @@ void Apply() {
     if (cfg.localCoop && cfg.localContainer &&
         !mem::HookFn(0x6FF420, &HookAspectRatio, &g_origAspectRatio, "CDraw::CalculateAspectRatio (local viewport)")) {
         LOGE("Local viewport aspect hook could not be installed");
+        TerminateProcess(GetCurrentProcess(), 6);
+    }
+    if (cfg.localCoop && cfg.localContainer &&
+        !mem::HookFn(0x7046E0, &HookPostEffectsRender, &g_origPostEffectsRender, "CPostEffects::Render (local resize)")) {
+        LOGE("Local post-effects resize hook could not be installed");
         TerminateProcess(GetCurrentProcess(), 6);
     }
     mem::RedirectCallFn(0x53BEE6, &HookUpdatePads, &g_origUpdatePads);  // CGame::Process -> CPad::UpdatePads

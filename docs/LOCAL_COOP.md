@@ -41,6 +41,17 @@ The host window receives a real resize through GTA's native camera/RenderWare pa
 on its current dimensions. The partner keeps running underneath it. Ending, skipping or leaving the scene restores the
 selected split, including after a world reload or disconnect; device assignments stay unchanged.
 
+Preview 6 fixes an omission in Preview 5's resize path: native camera resizing alone did not update GTA's
+post-effect front raster, filter vertices and UVs. An undersized raster can retain the previous shot when the new
+full-frame copy fails, producing a translucent old image over part of a cutscene. Local rendering now refreshes
+these resources through `CPostEffects::SetupBackBufferVertex` immediately before post-processing, once the camera
+and actual D3D backbuffer agree. It also refreshes on return to split-screen, including changes that fit in the same
+texture allocation. Invalid or unavailable resources defer post-processing for that frame and retry; gameplay and
+the new scene continue rendering. Normal color, grain and other effects remain enabled.
+
+The refresh is logged as `Local post effects refreshed` with camera/backbuffer/effect dimensions. This correction
+is based on the native render path; the user's photographed artifact still needs an in-game retest.
+
 Restoring from the taskbar, Alt+Tab or F10 retries focus handoff to the keyboard seat, resets stale key/mouse state and
 reacquires the native DirectInput mouse. No focus request activates a background session. If another application is
 foreground, input stays released until the game is brought back.
@@ -138,6 +149,9 @@ python tools/test_local_session.py   # Windows only; actual Session code with du
 `test_local_coop.py` checks all supported device pairs, device movement without duplicate ownership, readiness,
 disconnect/reconnect, odd-resolution splits, every signed 16-bit axis value, and the actual controller mapping including
 pickup, vehicle actions and neutral input. The Windows UI smoke test checks real native controls and launch gating.
+Render-resize regressions cover split/full/vertical transitions, exact-size UV refresh within one texture capacity,
+delayed device reset, missing/undersized allocations and retry after failure. They test the production refresh gating,
+not GTA's native raster allocator or rendered pixels.
 Save-file tests exercise paths longer than GTA's legacy buffers, scoped native prefixes, alignment without payload changes,
 snapshot transfers, corrupt/truncated saves and recovery from a previous storage error. They test the shared path/checksum logic, without executing GTA's native save routines.
 Session tests use dummy game/server processes to check private environments, failed starts, host-before-partner readiness,
