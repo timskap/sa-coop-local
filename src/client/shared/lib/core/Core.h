@@ -49,6 +49,7 @@ bool InterfaceHidden();  // F7: the game's HUD and our chat and labels are not d
 
 // Game flow
 bool LoadSaveFile(const std::wstring& path);   // loads an arbitrary save file (from menu or in game)
+const std::string& SaveLoadError();            // reason for the last failed LoadSaveFile, in the UI language
 bool StartNewGame();                           // as the menu's "Start new game" (from menu or in game)
 bool SaveWorldSnapshot(std::vector<uint8_t>& out);  // host: serialises the current game into memory
 bool SavingSnapshot();  // that save is going on (the player saves nothing: it is the partners' copy)

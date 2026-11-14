@@ -77,6 +77,18 @@ this mod without additional input hooks such as GInput. Compatibility with other
 - Both games and their server are assigned to an owned Windows job at process creation. Closing or forcibly
   terminating the launcher ends this process tree, including after a launcher crash. It does not save the game.
 
+### First world load after getting off the bike
+
+After the prologue, the host cannot create a world snapshot while riding. Getting off the bike allows the first snapshot,
+which Player 2 then loads. Preview 3 fixes two failures in this transition: the nested local profile path could overflow
+GTA's 104-byte load-name buffers, and a previous slot-read error could make GTA reject a valid save. Only short tokens
+enter GTA's legacy buffers now; the file-open hooks resolve the full paths. Native storage errors are reset before a
+new operation, and snapshot checksums are checked before upload and load. The main.scm compatibility check remains active.
+
+A file-read/checksum failure now reports that cause instead of guessing that the versions differ. If loading still fails,
+open **Saves / Logs** and collect `player1/local.log` and `player2/local.log` immediately after the failure. The log includes
+the save path length, previous storage error and native validation result. The normal saved games remain in their profiles.
+
 ## Implementation and verification
 
 `src/local` is a separate native Win32/GDI application, following the repository's layer rules. Shared, platform-independent
@@ -100,6 +112,8 @@ python tools/test_local_session.py   # Windows only; actual Session code with du
 `test_local_coop.py` checks all supported device pairs, device movement without duplicate ownership, readiness,
 disconnect/reconnect, odd-resolution splits, every signed 16-bit axis value, and the actual controller mapping including
 pickup, vehicle actions and neutral input. The Windows UI smoke test checks real native controls and launch gating.
+Save-file tests exercise paths longer than GTA's legacy buffers, snapshot transfers, corrupt/truncated saves and recovery
+from a previous storage error. They test the shared path/checksum logic, without executing GTA's native save routines.
 Session tests use dummy game/server processes to check private environments, failed starts, host-before-partner readiness,
 restart, focus handoff, one player exiting, normal shutdown and abrupt launcher termination. These tests do not exercise
 the GTA engine. Build outputs are 32-bit Windows binaries.
