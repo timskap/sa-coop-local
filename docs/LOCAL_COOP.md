@@ -6,7 +6,9 @@ with a top/bottom or left/right split on the primary monitor.
 
 The implementation launches **two GTA SA processes**, each rendering its own borderless viewport, connected through
 SA:COOP on localhost. It does not implement two cameras in one game process. Budget CPU, GPU and memory for two games.
-No GTA files are included. Requires your own **GTA San Andreas 1.0 US**, the ASI loader, and the client/server from this build.
+No GTA files are included. Requires **Windows 10 or later**, your own **GTA San Andreas 1.0 US**, the ASI loader,
+and the client/server from this build. Both launcher and clients use system DPI awareness so viewport coordinates
+remain in physical pixels when Windows display scaling is above 100%.
 
 ## Start
 
@@ -37,12 +39,13 @@ DirectInput-only controllers are not implemented. Controller numbers refer to Wi
 | Left stick | Move | Steer |
 | Right stick | Camera | Camera / vehicle-specific controls |
 | A | Sprint / swim | Handbrake |
-| X | Jump / climb | Available to game-specific menus |
+| X | Jump / climb | Secondary action / nitro |
 | Y | Enter vehicle | Exit vehicle |
 | B | Fire / melee | Fire |
 | RT | Fire | Accelerate |
 | LT | Aim | Brake / reverse |
 | LB / RB | Previous / next weapon | Look left / right |
+| LB + RB | Pickup / action (GTA L1) | Look behind |
 | Left stick click | Crouch | Horn |
 | Right stick click | Look behind | Look behind |
 | D-pad / Back / Start | GTA's normal pad actions, camera and pause | GTA's normal pad actions, camera and pause |
@@ -52,8 +55,10 @@ above. Controllers continue to drive their own player while either session windo
 unrelated application releases controller input; unplugging a pad produces neutral input until that XInput slot returns.
 In setup, unplugging also removes assignment and readiness, so reconnecting cannot launch a session accidentally.
 
-Custom SA:COOP overlay shortcuts (chat, F9 connection settings, invitations, etc.) are still keyboard-oriented;
-full controller navigation of those overlays is not implemented. For initial testing use the stock supported game and
+Custom SA:COOP overlay shortcuts (chat, F9 connection settings, invitations, etc.) are still keyboard-oriented.
+Click the controller player's window to use its overlay shortcuts and mouse UI; these keys are blocked from GTA's
+gameplay input. Click the keyboard player's window again to resume keyboard gameplay. Full controller navigation
+of those overlays is not implemented. For initial testing use the stock supported game and
 this mod without additional input hooks such as GInput. Compatibility with other input/window mods needs validation.
 
 ## Saves and local networking
@@ -69,6 +74,8 @@ this mod without additional input hooks such as GInput. Compatibility with other
 - Voice chat is disabled in this mode. Both games otherwise retain their own sound output.
 - Only one launcher per game installation can run. The launcher manages only the two processes it starts; local
   hosting does not run upstream's scan that terminates other servers from the same game folder.
+- Both games and their server are assigned to an owned Windows job at process creation. Closing or forcibly
+  terminating the launcher ends this process tree, including after a launcher crash. It does not save the game.
 
 ## Implementation and verification
 
@@ -87,11 +94,15 @@ python tools/i18n_check.py
 python tools/test_local_coop.py
 python tools/build.py dist
 python tools/test_local_launcher.py  # Windows only; creates and exercises the real launcher window
+python tools/test_local_session.py   # Windows only; actual Session code with dummy games/server
 ```
 
 `test_local_coop.py` checks all supported device pairs, device movement without duplicate ownership, readiness,
-disconnect/reconnect, odd-resolution splits, and every signed 16-bit axis value. The Windows UI smoke test checks
-real native controls and launch gating, without a game installation. Build outputs are 32-bit Windows binaries.
+disconnect/reconnect, odd-resolution splits, every signed 16-bit axis value, and the actual controller mapping including
+pickup, vehicle actions and neutral input. The Windows UI smoke test checks real native controls and launch gating.
+Session tests use dummy game/server processes to check private environments, failed starts, host-before-partner readiness,
+restart, focus handoff, one player exiting, normal shutdown and abrupt launcher termination. These tests do not exercise
+the GTA engine. Build outputs are 32-bit Windows binaries.
 Linux cross-compilation can use the matching official llvm-mingw Linux distribution at `toolchain/llvm-mingw`.
 
 **Gameplay is not yet verified.** Before treating this branch as release-ready, test on Windows with a legal game copy:

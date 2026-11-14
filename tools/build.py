@@ -92,7 +92,7 @@ def targets(extra=()):
     local = {
         "name": "local", "kind": "exe", "out": "coop-local.exe", "gui": True,
         "sources": glob("src/local", "**/*.cpp"),
-        "includes": ["src", "src/local"], "defines": [], "cflags": [],
+        "includes": ["src", "src/local"], "defines": [], "cflags": ["-U_WIN32_WINNT", "-D_WIN32_WINNT=0x0A00"],
         "deps": [lib("local-common", ["src/common/lib/ini/Ini.cpp", "src/common/lib/util/Util.cpp"], includes=["src"])],
         "libs": ["-lws2_32", "-lgdi32", "-luser32", "-lkernel32", "-lshell32"],
         "ldflags": ["-municode"],

@@ -1,5 +1,5 @@
-#include "features/session/LocalSession.h"
 #include <winsock2.h>
+#include "features/session/LocalSession.h"
 #include <shlobj.h>
 #include <algorithm>
 #include <vector>
@@ -124,10 +124,29 @@ bool Session::Launch(int player) {
     for (const auto& entry : entries) { block.insert(block.end(), entry.begin(), entry.end()); block.push_back(0); }
     block.push_back(0);
     std::wstring exe = gameDir + L"gta_sa.exe", command = L"\"" + exe + L"\"";
-    STARTUPINFOW startup{sizeof(startup)};
+    // Assign at creation, before any game code can spawn its server. The non-inherited job
+    // handle belongs only to the launcher: even a launcher crash closes the entire process tree.
+    SIZE_T bytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    std::vector<uint8_t> storage(bytes);
+    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &bytes)) return false;
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof(job), nullptr, nullptr)) {
+        const DWORD error = GetLastError();
+        DeleteProcThreadAttributeList(attributes);
+        SetLastError(error);
+        return false;
+    }
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.lpAttributeList = attributes;
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT,
-                        block.data(), gameDir.c_str(), &startup, &process)) return false;
+    const BOOL created = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE,
+                                       CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+                                       block.data(), gameDir.c_str(), &startup.StartupInfo, &process);
+    const DWORD error = GetLastError();
+    DeleteProcThreadAttributeList(attributes);
+    if (!created) { SetLastError(error); return false; }
     CloseHandle(process.hThread);
     processes[player] = process.hProcess;
     pids[player] = process.dwProcessId;
@@ -144,6 +163,13 @@ bool Session::Start(const Setup& setup, int slot) {
     const unsigned port = FreePort();
     if (!port) { status = L"Could not allocate a local UDP port."; return false; }
     if (!WriteConfigs(setup, slot, port)) { Fail(status); return false; }
+    job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        Fail(L"Could not create the local session process group. Windows error " + std::to_wstring(GetLastError()));
+        return false;
+    }
     keyboardSeat = setup.seats[1].device == kKeyboard ? 1 : 0;
     if (!Launch(0)) { Fail(L"Could not start Player 1. Windows error " + std::to_wstring(GetLastError())); return false; }
     phase = Phase::Host;
@@ -181,6 +207,7 @@ void Session::Stop() {
         CloseHandle(process); process = nullptr;
     }
     for (auto& event : ready) if (event) { CloseHandle(event); event = nullptr; }
+    if (job) { CloseHandle(job); job = nullptr; }
     pids = {};
     phase = Phase::Idle;
     focusRequested = false;

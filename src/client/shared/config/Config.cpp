@@ -103,7 +103,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
         localReadyEvent = ini.Get("local", "ready_event", "");
         std::wstring dir = Utf8ToWide(ini.Get("local", "data_dir", ""));
         if (!dir.empty()) {
-            if (dir.size() < 2 || dir[1] != L':') dir = coopDir + dir;
+            if ((dir.size() < 2 || dir[1] != L':') && dir[0] != L'\\') dir = coopDir + dir;
             if (dir.back() != L'\\') dir += L'\\';
             dataDir = dir;
         }
