@@ -1,25 +1,27 @@
 Experimental local two-player split-screen for GTA San Andreas 1.0 US on Windows 10 or later.
 
-Preview 5 makes the host the shared audio and cinematic view for local play, and repairs input when restoring the game.
+Preview 6 corrects the post-effect resize path introduced with fullscreen host cutscenes in Preview 5.
 
-- Radio, cutscene soundtracks and shared mission dialogue are audible only from Player 1. Player 2 keeps effects; native playback clocks continue silently.
-- During host cutscenes and scripted mission camera scenes, the host fills the fullscreen container. Native camera resizing and a local aspect-ratio correction replace stretching a half-screen frame. The selected split returns when the scene ends, is skipped or is left.
-- Player 2 keeps running underneath the host view. Device assignments stay unchanged.
-- Taskbar, Alt+Tab and F10 restoration retry handoff to the keyboard player, clear stale key/mouse state and reacquire the DirectInput mouse. Queued activation messages cannot overwrite the current foreground state.
-- Includes Preview 4's save-path/alignment correction and detailed native storage diagnostics.
+- Refreshes GTA's post-effect front raster, filter vertices and UV coordinates when the host changes between split-screen and fullscreen.
+- Waits until the native camera and actual D3D backbuffer agree before rebuilding. Invalid or undersized effect resources are retried without blending their stale image over the new scene.
+- Refreshes coordinates even when the new viewport fits in the same texture allocation. Normal color, grain and other effects remain enabled.
+- Retains host-only radio/dialogue, automatic host cutscene presentation, split restoration and keyboard/mouse focus recovery from Preview 5.
+
+The reported photo is consistent with the old half-screen effect raster retaining a previous shot after a full-frame copy
+fails. The missing native post-effect reinitialization is corrected, but **the photographed issue still needs an in-game retest**.
+This environment does not run GTA or validate its rendered pixels.
 
 Download **SA-COOP.zip**. Close both games and `coop-local.exe`, extract the **complete archive** over the same GTA folder,
-then launch `coop-local.exe`. F10 opens session controls; Alt+F4 asks to end both games. Save first. No GTA game files are included.
+then start `coop-local.exe` again. Save before closing. No GTA game files are included.
 
-**Actual GTA gameplay, audible output and native render resizing still need in-game verification.** The prior bike/world-load
-failure is not claimed fixed by dummy-process tests. If loading still fails, open F10 → Saves / Logs and collect both player
-logs plus `player2/world/partner_world.b`.
+If the overlay remains, open F10 → Saves / Logs and collect `player1/local.log`. New lines beginning
+`Local post effects refreshed` report camera, backbuffer and effect-raster dimensions. The prior bike/save-load report is
+not claimed resolved by these render changes; its Preview 4 diagnostics are retained.
 
-This archive comes unchanged from the [Windows build](https://github.com/timskap/sa-coop-local/actions/runs/43609770551)
-of commit `e102eb2de6fdcdbb055fd0a40a14b7b0ca8cea38`. Full compilation, FSD/i18n checks, portable input/save/audio regressions,
-launcher smoke and native session integration passed. Session tests exercise both keyboard seats,
-repeated cinematic window resize/restore, deliberately dropped focus requests, actual DirectInput unacquire/reacquire and
-process cleanup. They use dummy games, not GTA. The small CI display uses horizontal fullscreen and verifies rejection of
-an undersized vertical layout; portable tests cover both split calculations. `SHA256SUMS.txt` contains the archive checksum.
+This archive comes unchanged from [Windows build 43612172812](https://github.com/timskap/sa-coop-local/actions/runs/43612172812)
+of commit `265234f0c54be9f22c45ec9938957342ac82554d`. Full compilation, FSD/i18n checks, portable
+input/save/audio/render-resize regressions, launcher smoke and native session integration passed. The new render tests cover
+split/full/vertical transitions, same-capacity UV changes, delayed device resets, recreated rasters and allocation recovery;
+they do not execute GTA's native allocator. `SHA256SUMS.txt` contains the archive checksum.
 
-[Setup and testing notes](https://github.com/timskap/sa-coop-local/blob/e102eb2de6fdcdbb055fd0a40a14b7b0ca8cea38/docs/LOCAL_COOP.md)
+[Setup and testing notes](https://github.com/timskap/sa-coop-local/blob/265234f0c54be9f22c45ec9938957342ac82554d/docs/LOCAL_COOP.md)
