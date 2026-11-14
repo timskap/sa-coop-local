@@ -1,27 +1,34 @@
 Experimental local two-player split-screen for GTA San Andreas 1.0 US on Windows 10 or later.
 
-Preview 6 corrects the post-effect resize path introduced with fullscreen host cutscenes in Preview 5.
+Preview 7 adds the missing native-menu route for Xbox controller buttons.
 
-- Refreshes GTA's post-effect front raster, filter vertices and UV coordinates when the host changes between split-screen and fullscreen.
-- Waits until the native camera and actual D3D backbuffer agree before rebuilding. Invalid or undersized effect resources are retried without blending their stale image over the new scene.
-- Refreshes coordinates even when the new viewport fits in the same texture allocation. Normal color, grain and other effects remain enabled.
-- Retains host-only radio/dialogue, automatic host cutscene presentation, split restoration and keyboard/mouse focus recovery from Preview 5.
+| Xbox button | During gameplay | In GTA's native menu |
+| --- | --- | --- |
+| Menu / Start | Open menu | Escape / back / close pause root |
+| View / Back / Select | Change camera view | Back / close pause root |
+| A | Existing gameplay action | Confirm |
+| B | Existing gameplay action | Back / close pause root |
+| D-pad / left stick | Existing gameplay action | Navigate |
+| X | Existing gameplay action | Toggle waypoint on map |
+| LB / RB | Existing gameplay action | Zoom on map |
 
-The reported photo is consistent with the old half-screen effect raster retaining a previous shot after a full-frame copy
-fails. The missing native post-effect reinitialization is corrected, but **the photographed issue still needs an in-game retest**.
-This environment does not run GTA or validate its rendered pixels.
+The PC frontend checks keyboard Escape, so setting a controller's Start field alone did not open it. This build
+bridges the assigned controller into that game's native menu update without sending OS key presses or moving focus
+from the keyboard player's window. A separate button history prevents a held Menu from toggling repeatedly, or B
+from firing when leaving the menu. Buttons held during focus loss, overlay capture or reconnection must be released
+before acting again. As before, the shared world continues running while a native menu is open.
+
+Custom SA:COOP overlays (F9, chat, invitations) remain keyboard/mouse oriented. Preview 6's post-effect resize fix,
+host-only radio/dialogue, fullscreen host cutscenes and focus recovery are retained.
 
 Download **SA-COOP.zip**. Close both games and `coop-local.exe`, extract the **complete archive** over the same GTA folder,
-then start `coop-local.exe` again. Save before closing. No GTA game files are included.
+then launch `coop-local.exe`. Save before closing. No GTA game files are included.
 
-If the overlay remains, open F10 → Saves / Logs and collect `player1/local.log`. New lines beginning
-`Local post effects refreshed` report camera, backbuffer and effect-raster dimensions. The prior bike/save-load report is
-not claimed resolved by these render changes; its Preview 4 diagnostics are retained.
+This archive comes unchanged from [Windows build 43613213633](https://github.com/timskap/sa-coop-local/actions/runs/43613213633)
+of commit `56d1d893db48a394e50992dc1d0304c659bbff19`. Full compilation, FSD/i18n checks, portable
+input/save/audio/render/menu regressions and native launcher/session integration passed. New menu tests cover physical button
+edges, scoped Escape restoration, independent seats, held-button recovery and foot/vehicle menu mappings.
+**Actual GTA frontend behavior on a physical Xbox controller still needs an in-game retest.** These tests use portable
+logic and dummy game processes. `SHA256SUMS.txt` contains the archive checksum.
 
-This archive comes unchanged from [Windows build 43612172812](https://github.com/timskap/sa-coop-local/actions/runs/43612172812)
-of commit `265234f0c54be9f22c45ec9938957342ac82554d`. Full compilation, FSD/i18n checks, portable
-input/save/audio/render-resize regressions, launcher smoke and native session integration passed. The new render tests cover
-split/full/vertical transitions, same-capacity UV changes, delayed device resets, recreated rasters and allocation recovery;
-they do not execute GTA's native allocator. `SHA256SUMS.txt` contains the archive checksum.
-
-[Setup and testing notes](https://github.com/timskap/sa-coop-local/blob/265234f0c54be9f22c45ec9938957342ac82554d/docs/LOCAL_COOP.md)
+[Setup and testing notes](https://github.com/timskap/sa-coop-local/blob/56d1d893db48a394e50992dc1d0304c659bbff19/docs/LOCAL_COOP.md)
