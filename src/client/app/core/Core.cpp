@@ -25,6 +25,7 @@
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/game/SaveFile.h"
+#include "shared/local-coop/LocalInput.h"
 #include "shared/lib/memory/Memory.h"
 #include "shared/ui/chat/Chat.h"
 #include "shared/ui/input/Input.h"
@@ -304,6 +305,8 @@ void CommonFrame() {
     Heartbeat();
     if (g_lastCommonFrame == g_frameNo) return;
     g_lastCommonFrame = g_frameNo;
+    localinput::ServiceFocus();
+    patches::UpdateLocalPresentation(LocalHostCinematic());
 
     if (!ui::In().Installed()) {
         if (void* hwnd = game::GameWindow()) {

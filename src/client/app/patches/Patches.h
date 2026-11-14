@@ -15,6 +15,9 @@ bool GameMouseEnabled();
 // Windowed mode: restores our window style/size if the game or RW changed it (called each second).
 void ApplyWindowPlacement();
 
+// Switch the local host between its split viewport and the whole container.
+void UpdateLocalPresentation(bool cinematic);
+
 // Fixes a stack bug in the inline hooks of plugins built with an old "injector" (they load until the game starts).
 void FixPluginWrappers();
 

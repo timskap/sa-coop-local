@@ -5218,6 +5218,11 @@ struct Reg {
 } g_reg;
 }  // namespace
 
+bool LocalHostCinematic() {
+    return Cfg().localCoop && Cfg().wantsHost && core::IsPlayerReady() && Net().Online() && Net().IsHost() &&
+        (CutsceneRunning() || HostScene());
+}
+
 std::string CutsceneSkipText(std::string& hint) {
     hint.clear();
     if (!Net().Online()) return "";

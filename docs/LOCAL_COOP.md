@@ -30,6 +30,21 @@ remain in physical pixels when Windows display scaling is above 100%.
 **New game retains upstream behavior:** Player 1 plays the opening prologue alone and Player 2 waits. Load a save
 after the prologue for an immediate two-player start.
 
+## Shared audio and cutscenes
+
+In local play, Player 1 (the host) provides the radio, cutscene soundtrack and shared mission dialogue.
+Player 2's effects remain audible. Radio/cutscene playback still advances silently in Player 2 so native scene clocks
+and completion checks keep working. Ordinary online sessions retain their existing audio behavior.
+
+During the host's cutscenes and scripted mission camera scenes, its viewport automatically fills the whole container.
+The host window receives a real resize through GTA's native camera/RenderWare path, with the local camera aspect based
+on its current dimensions. The partner keeps running underneath it. Ending, skipping or leaving the scene restores the
+selected split, including after a world reload or disconnect; device assignments stay unchanged.
+
+Restoring from the taskbar, Alt+Tab or F10 retries focus handoff to the keyboard seat, resets stale key/mouse state and
+reacquires the native DirectInput mouse. No focus request activates a background session. If another application is
+foreground, input stays released until the game is brought back.
+
 ## Devices and controls
 
 Supported combinations are keyboard/mouse + controller (either player can use the keyboard), or two different
@@ -126,8 +141,10 @@ pickup, vehicle actions and neutral input. The Windows UI smoke test checks real
 Save-file tests exercise paths longer than GTA's legacy buffers, scoped native prefixes, alignment without payload changes,
 snapshot transfers, corrupt/truncated saves and recovery from a previous storage error. They test the shared path/checksum logic, without executing GTA's native save routines.
 Session tests use dummy game/server processes to check private environments, failed starts, host-before-partner readiness,
-both fullscreen layouts without gaps/overlaps, child HWND ownership, focus restoration, F10 controls, hidden DirectInput
-ownership, restart, one player exiting, normal shutdown and abrupt launcher termination. These tests do not exercise
+available fullscreen layouts without gaps/overlaps, child HWND ownership, repeated cinematic resize/restore and sibling order,
+both keyboard seats, repeated taskbar/Alt+Tab restoration with deliberately dropped focus requests, actual DirectInput mouse
+unacquire/reacquire, stale activation messages, F10 controls, restart, one player exiting, normal shutdown and abrupt launcher termination.
+Small CI displays explicitly reject undersized vertical layouts; portable tests cover both split calculations. These tests do not exercise
 the GTA engine. Build outputs are 32-bit Windows binaries.
 Linux cross-compilation can use the matching official llvm-mingw Linux distribution at `toolchain/llvm-mingw`.
 
@@ -136,6 +153,8 @@ Linux cross-compilation can use the matching official llvm-mingw Linux distribut
 - Both keyboard/controller permutations and two controllers; walking, aiming, shooting, swimming and driving independently.
 - Both layouts, controller reconnect, Alt+Tab, native pause menus, different desktop scaling and focus restoration.
 - New-game prologue, an existing save, a story mission, a cutscene, death, safe-house save and restart.
+- Radio/cutscene/mission speech audible once from the host, both players' effects still audible; scene completion without hangs.
+- Fullscreen host cutscenes and scripted camera scenes, skip/end/abort restoration, correct aspect and subtitles in both layouts.
 - Startup failure, a missing/old ASI, occupied port, one game closing, and launcher shutdown without orphaned servers.
 - Controller camera behavior, overlay accessibility, audio overlap and compatibility with any additional mods.
 

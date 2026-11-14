@@ -10,12 +10,14 @@
 
 #include "common/api/protocol/Protocol.h"
 #include "common/lib/log/Log.h"
+#include "common/lib/local-coop/AudioPolicy.h"
 #include "common/lib/util/Util.h"
 #include "entities/mission/Mission.h"
 #include "entities/ped/Peds.h"
 #include "entities/player/Players.h"
 #include "entities/vehicle/Vehicles.h"
 #include "shared/api/net-session/Session.h"
+#include "shared/config/Config.h"
 #include "shared/game/Game.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
@@ -48,6 +50,7 @@ void* Engine() { return (void*)kAudioEngine; }
 // the partner heard nothing of the call, 28.10; MOB_RAN's are side calls, not replicated), with a partner to
 // hear it
 bool Sharing() {
+    if (!local::ShareMissionSpeech(Cfg().localCoop)) return false;
     void* s = CurrentScript();
     return HostReplicating() && (MissionThread(s) || (s && !RunningMission() && !strncmp(Field<char[8]>(s, 0x08), "mob_", 4)));
 }
@@ -146,6 +149,9 @@ CEntity* Speaker(uint8_t to, uint16_t id) {
 }
 
 void Handle(uint8_t from, Reader& r) {
+    // Local seats share speakers: the host already says these lines. Keep the ordinary
+    // network path for remote PCs, and leave subtitles/script timing untouched.
+    if (!local::ShareMissionSpeech(Cfg().localCoop)) return;
     uint8_t op = r.U8(), slot = r.U8();
     if (!r.Ok() || from != Net().HostId() || Net().IsHost() || !core::IsPlayerReady() || slot >= kSlots) return;
     Slot& s = g_slots[slot];

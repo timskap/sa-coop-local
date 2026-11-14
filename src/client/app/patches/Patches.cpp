@@ -51,6 +51,7 @@ using PadFn = void(__fastcall*)(void*, void*);
 PadFn g_origUpdateMouse = nullptr;
 bool g_buttonsWaitUp = false;  // a window let the mouse go: its buttons reach the game once they are let go
 void __fastcall HookUpdateMouse(void* self, void* edx) {
+    localinput::ServiceFocus();
     if (Cfg().localCoop && !localinput::HasInputFocus()) {
         // Background DirectInput still accumulates mouse deltas. Drain them while the
         // session is unfocused so returning to the game cannot cause a camera jump.
@@ -183,11 +184,12 @@ LONG WindowStyle() {
     return Cfg().borderless ? WS_POPUP | WS_VISIBLE : WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
 }
 
+bool g_localCinematic = false;
 void AdjustWindow(HWND hwnd, int w, int h) {
     auto& cfg = Cfg();
     if (cfg.localCoop && cfg.localContainer) {
-        if (!local::EmbedPlayer(hwnd, reinterpret_cast<HWND>(static_cast<uintptr_t>(cfg.localContainer)), cfg.localSession,
-                               cfg.windowX, cfg.windowY, w, h)) {
+        if (!local::PresentPlayer(hwnd, reinterpret_cast<HWND>(static_cast<uintptr_t>(cfg.localContainer)), cfg.localSession,
+                                 {cfg.windowX, cfg.windowY, w, h}, g_localCinematic)) {
             LOGE("Could not embed game in the fullscreen session (Windows error %lu)", GetLastError());
             TerminateProcess(GetCurrentProcess(), 5);
         }
@@ -296,6 +298,14 @@ int __cdecl HookSelectDevice() {
 // IDirect3D9::GetAdapterDisplayMode. Reporting the requested window size instead makes RW create a
 // windowed device of exactly that size with all internal structures consistent.
 int g_winW = 0, g_winH = 0;
+VoidFn g_origAspectRatio = nullptr;
+void __cdecl HookAspectRatio() {
+    g_origAspectRatio();
+    // GTA otherwise chooses a fixed 4:3/5:4/16:9 ratio. A split viewport and the
+    // full host frame have different proportions; use the actual camera raster.
+    if (game::ScreenWidth() > 0 && game::ScreenHeight() > 0)
+        game::Ref<float>(0xC3EFA4) = static_cast<float>(game::ScreenWidth()) / game::ScreenHeight();
+}
 using GetAdapterDisplayModeFn = HRESULT(WINAPI*)(IDirect3D9*, UINT, D3DDISPLAYMODE*);
 using Direct3DCreate9Fn = IDirect3D9*(WINAPI*)(UINT);
 GetAdapterDisplayModeFn g_origGetAdapterDisplayMode = nullptr;
@@ -862,6 +872,22 @@ void __cdecl HookDeleteAllMissionObjects() {  // a load's: every slot first
 
 bool GameMouseEnabled() { return !ui::In().MouseCaptured(); }
 
+void UpdateLocalPresentation(bool cinematic) {
+    const auto& cfg = Cfg();
+    if (!cfg.localCoop || !cfg.wantsHost || !cfg.localContainer || g_winW <= 0) return;
+    HWND window = static_cast<HWND>(game::GameWindow());
+    HWND container = static_cast<HWND>(localinput::ContainerWindow());
+    RECT bounds{};
+    if (!window || !container || !GetClientRect(container, &bounds) || bounds.right <= 0 || bounds.bottom <= 0) return;
+    if (cinematic == g_localCinematic) return;
+    g_localCinematic = cinematic;
+    g_winW = cinematic ? bounds.right : cfg.width;
+    g_winH = cinematic ? bounds.bottom : cfg.height;
+    AdjustWindow(window, g_winW, g_winH);
+    localinput::RequestFocusRecovery();
+    LOGI("Local presentation: %s, camera target %dx%d", cinematic ? "host cinematic" : "split screen", g_winW, g_winH);
+}
+
 void ApplyWindowPlacement() {
     if (!Cfg().windowed || g_winW <= 0) return;
     HWND hwnd = (HWND)game::GameWindow();
@@ -925,6 +951,11 @@ void Apply() {
     }
 
     localinput::Install();
+    if (cfg.localCoop && cfg.localContainer &&
+        !mem::HookFn(0x6FF420, &HookAspectRatio, &g_origAspectRatio, "CDraw::CalculateAspectRatio (local viewport)")) {
+        LOGE("Local viewport aspect hook could not be installed");
+        TerminateProcess(GetCurrentProcess(), 6);
+    }
     mem::RedirectCallFn(0x53BEE6, &HookUpdatePads, &g_origUpdatePads);  // CGame::Process -> CPad::UpdatePads
 
     // CdStreamInit opens the IMG archives past Windows' file cache (FILE_FLAG_NO_BUFFERING when the disk's sector is 2 KB

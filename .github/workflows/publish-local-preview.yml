@@ -4,7 +4,7 @@ name: Publish local co-op preview
 
 on:
   push:
-    branches: [fix/fullscreen-session-save-load]
+    branches: [fix/local-audio-focus-recovery]
     paths: [.github/workflows/publish-local-preview.yml]
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-local-preview-4
+  group: publish-local-preview-5
   cancel-in-progress: false
 
 jobs:
@@ -22,8 +22,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      SOURCE_SHA: c4aa144ff3131dbdeb5d648d2be7be8e554c08f9
-      RELEASE_TAG: v0.3.3-local.4
+      SOURCE_SHA: e102eb2de6fdcdbb055fd0a40a14b7b0ca8cea38
+      RELEASE_TAG: v0.3.3-local.5
     steps:
       - uses: actions/checkout@v4
 
@@ -31,10 +31,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          result=$(gh api "repos/$GH_REPO/actions/runs/43604945729" --jq '.head_sha + " " + .conclusion')
+          result=$(gh api "repos/$GH_REPO/actions/runs/43609770551" --jq '.head_sha + " " + .conclusion')
           test "$result" = "$SOURCE_SHA success"
-          gh api "repos/$GH_REPO/actions/artifacts/14118331375/zip" > "$RUNNER_TEMP/local-actions-artifact.zip"
-          printf '%s  %s\n' 'b76facb80d84252e74e605c9f002186af2cf7729415442940a6034cfa55acaff' "$RUNNER_TEMP/local-actions-artifact.zip" | sha256sum --check
+          gh api "repos/$GH_REPO/actions/artifacts/14118619667/zip" > "$RUNNER_TEMP/local-actions-artifact.zip"
+          printf '%s  %s\n' '8136134079ede487fd2a4dd5e71339966e7e06aa44fdc7031590e985a467476c' "$RUNNER_TEMP/local-actions-artifact.zip" | sha256sum --check
 
       - name: Verify the install archive and generate its checksum
         shell: python
@@ -66,5 +66,5 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" release/SA-COOP.zip release/SHA256SUMS.txt \
             --target "$SOURCE_SHA" --prerelease --latest=false \
-            --title 'SA:COOP Local Split-Screen - Preview 4' \
+            --title 'SA:COOP Local Split-Screen - Preview 5' \
             --notes-file .github/local-release-notes.md

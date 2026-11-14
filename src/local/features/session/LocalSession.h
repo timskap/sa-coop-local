@@ -35,8 +35,13 @@ private:
     bool focusRequested = false;
     HWND container = nullptr, controls = nullptr;
     bool closing = false, stopping = false;
+    bool focusPending = false, focusSent = false, foregroundActive = false, minimized = false;
+    bool cinematic = false;
+    ULONGLONG focusRetryAt = 0, focusDeadline = 0;
     bool CreateContainer();
     void FocusKeyboard();
+    void ServiceFocus();
+    void ServicePresentation();
     void NotifyActivation(bool active);
     void ShowControls();
     static LRESULT CALLBACK ContainerProc(HWND window, UINT message, WPARAM wp, LPARAM lp);

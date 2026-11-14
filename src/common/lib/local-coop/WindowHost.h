@@ -1,10 +1,12 @@
 #pragma once
 #include <windows.h>
 #include <cstdint>
+#include "common/lib/local-coop/Setup.h"
 
 namespace coop::local {
 inline constexpr wchar_t kSessionProperty[] = L"SA_COOP_LOCAL_SESSION";
 inline constexpr wchar_t kContainerClass[] = L"SA_COOP_FULLSCREEN";
+inline constexpr wchar_t kCinematicProperty[] = L"SA_COOP_HOST_CINEMATIC";
 inline constexpr UINT kFocusPlayer = WM_APP + 0x340;
 inline constexpr UINT kFocusKeyboard = WM_APP + 0x341;
 inline constexpr UINT kSessionControls = WM_APP + 0x342;
@@ -22,7 +24,7 @@ inline bool ContainerFocused(HWND container) {
     return container && GetForegroundWindow() == container && !IsIconic(container);
 }
 inline bool PlayerFocused(HWND window, HWND container) {
-    if (!ContainerFocused(container)) return false;
+    if (!window || !IsWindow(window) || GetParent(window) != container || !ContainerFocused(container)) return false;
     GUITHREADINFO info{sizeof(info)};
     return GetGUIThreadInfo(GetWindowThreadProcessId(window, nullptr), &info) &&
         (info.hwndFocus == window || IsChild(window, info.hwndFocus));
@@ -41,6 +43,21 @@ inline bool EmbedPlayer(HWND window, HWND container, DWORD session, int x, int y
     return SetWindowPos(window, nullptr, x, y, width, height,
                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW) != FALSE;
 }
+// Run on the game's thread, before rendering. WM_SIZE reaches GTA's native
+// CameraSize; RenderWare then resizes its backbuffer on the next camera update.
+// Keep the partner visible underneath: hiding/minimizing it would disturb input
+// and playback. Only the host changes size and sibling order.
+inline bool PresentPlayer(HWND window, HWND container, DWORD session, Viewport split, bool cinematic) {
+    RECT bounds{};
+    if (!IsContainer(container, session) || !GetClientRect(container, &bounds)) return false;
+    const Viewport view = cinematic ? Viewport{0, 0, bounds.right, bounds.bottom} : split;
+    if (!EmbedPlayer(window, container, session, view.x, view.y, view.width, view.height)) return false;
+    if (cinematic) {
+        SetPropW(window, kCinematicProperty, reinterpret_cast<HANDLE>(1));
+        SetWindowPos(window, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    } else RemovePropW(window, kCinematicProperty);
+    return true;
+}
 // Reserved session controls are handled before GTA or the mod's overlay sees keys.
 inline bool PlayerWindowMessage(HWND window, HWND container, UINT message, WPARAM wp, LPARAM lp, LRESULT& result) {
     if (!container || GetParent(window) != container) return false;
@@ -48,7 +65,8 @@ inline bool PlayerWindowMessage(HWND window, HWND container, UINT message, WPARA
     if (message == kSessionActivation) {
         // Child windows do not receive the top-level parent's activation transition.
         // Deliver it on the game thread so native audio/input activation stays coherent.
-        SendMessageW(window, WM_ACTIVATE, wp ? WA_ACTIVE : WA_INACTIVE, 0);
+        // Queued deactivation can arrive after restoration. Current OS state wins.
+        SendMessageW(window, WM_ACTIVATE, ContainerFocused(container) ? WA_ACTIVE : WA_INACTIVE, 0);
         return true;
     }
     if (message == kFocusPlayer) {

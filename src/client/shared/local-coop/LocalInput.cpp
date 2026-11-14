@@ -25,6 +25,9 @@ using CooperativeFn = HRESULT(WINAPI*)(void*, HWND, DWORD);
 InputCreateFn originalInputCreate = nullptr;
 std::map<void**, DeviceCreateFn> originalDeviceCreates;
 std::map<void**, CooperativeFn> originalCooperatives;
+bool recoverFocus = false, wasFocused = false, recoverMouse = false;
+ULONGLONG nextMouseRecovery = 0;
+HRESULT mouseRecoveryError = S_OK;
 HRESULT WINAPI Cooperative(void* device, HWND window, DWORD flags) {
     if (Cfg().localContainer) {
         window = local::BackgroundInputWindow();
@@ -100,6 +103,46 @@ bool HasInputFocus() {
     if (HWND parent = static_cast<HWND>(ContainerWindow()))
         return local::PlayerFocused(static_cast<HWND>(game::GameWindow()), parent);
     return game::IsForeground();
+}
+
+void RequestFocusRecovery() { if (Cfg().localCoop && Cfg().localContainer) recoverFocus = true; }
+void ServiceFocus() {
+    HWND container = static_cast<HWND>(ContainerWindow());
+    if (!container) return;
+    HWND window = static_cast<HWND>(game::GameWindow());
+    const bool focused = local::PlayerFocused(window, container);
+    // WM_ACTIVATE/WM_KILLFOCUS can be queued out of order across the embedded processes.
+    // GTA's cached flag must agree with the real focused child, not a stale message.
+    game::Ref<uint8_t>(game::addr::ForegroundApp) = focused;
+    if (!focused) { wasFocused = false; recoverMouse = false; return; }
+    if (!wasFocused || recoverFocus) {
+        recoverFocus = false;
+        wasFocused = true;
+        ui::In().ClearGameKeys();
+        memset((void*)0xB73418, 0, 0x28);
+        ClipCursor(nullptr);
+        recoverMouse = true;
+        nextMouseRecovery = 0;
+        mouseRecoveryError = S_OK;
+    }
+    if (!recoverMouse || GetTickCount64() < nextMouseRecovery) return;
+    // psGlobalType::diMouse (same-process native COM interface; no cached dangling pointer).
+    auto* ps = game::Ref<void*>(0xC17054);
+    auto* mouse = ps ? game::Field<IDirectInputDevice8A*>(ps, 0x1C) : nullptr;
+    const HRESULT result = local::RecoverMouse(mouse);
+    if (FAILED(result)) {
+        if (result != mouseRecoveryError) LOGW("Local focus: mouse reacquire pending (HRESULT %08lX)", (unsigned long)result);
+        mouseRecoveryError = result;
+        nextMouseRecovery = GetTickCount64() + 250;
+        return;
+    }
+    recoverMouse = false;
+    if (!UsesGamepad() && !ui::In().MouseCaptured()) {
+        RECT rect{}; GetClientRect(window, &rect);
+        POINT center{rect.right / 2, rect.bottom / 2};
+        if (ClientToScreen(window, &center)) SetCursorPos(center.x, center.y);
+    }
+    LOGI("Local focus: keyboard state reset and mouse reacquired for hwnd %p", window);
 }
 
 bool UsesGamepad() { return Cfg().localCoop && Cfg().localDevice != -1; }
