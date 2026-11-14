@@ -22,10 +22,14 @@ user.SendMessageW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
 user.SendMessageW.restype = C.c_ssize_t
 user.PostMessageW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
 user.GetWindowTextW.argtypes = [W.HWND, W.LPWSTR, C.c_int]
+user.WaitForInputIdle.argtypes = [W.HANDLE, W.DWORD]
+user.WaitForInputIdle.restype = W.DWORD
+user.IsWindowVisible.argtypes = [W.HWND]
 
 process = subprocess.Popen([str(ROOT / "build/release/bin/coop-local.exe")])
 window = None
 try:
+    assert user.WaitForInputIdle(int(process._handle), 10000) == 0, "Launcher did not finish initializing"
     for attempt in range(100):
         found = []
         @callback_type
@@ -34,7 +38,7 @@ try:
             user.GetWindowThreadProcessId(hwnd, C.byref(pid))
             title = C.create_unicode_buffer(256)
             user.GetWindowTextW(hwnd, title, len(title))
-            if pid.value == process.pid and title.value == "SA:COOP - Local Play":
+            if pid.value == process.pid and user.IsWindowVisible(hwnd) and title.value == "SA:COOP - Local Play":
                 found.append(hwnd)
             return True
         user.EnumWindows(visit, 0)

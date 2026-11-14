@@ -125,7 +125,8 @@ void Paint(HDC target) {
     SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
 }
 void AddControl(int id, const std::wstring& caption, int x, int y, int width, int height) {
-    HWND control = CreateWindowExW(0, L"BUTTON", caption.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+    const DWORD disabled = id == kStart || id == kReady1 || id == kReady2 ? WS_DISABLED : 0;
+    HWND control = CreateWindowExW(0, L"BUTTON", caption.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | disabled,
                                   x, y, width, height, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
     controls.push_back({control, id, x, y, width, height});
 }
