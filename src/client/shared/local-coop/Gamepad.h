@@ -15,7 +15,7 @@ struct PadSample {
     uint8_t lt = 0, rt = 0;
     int16_t lx = 0, ly = 0, rx = 0, ry = 0;
 };
-inline game::CControllerState MapGamepad(const PadSample& p, bool vehicle) {
+inline game::CControllerState MapGamepad(const PadSample& p, bool vehicle, bool menu = false) {
     game::CControllerState s{};
     auto button = [&](uint16_t b) -> int16_t { return (p.buttons & b) ? 255 : 0; };
     s.LeftStickX = local::Axis(p.lx, 7849);
@@ -25,6 +25,13 @@ inline game::CControllerState MapGamepad(const PadSample& p, bool vehicle) {
     s.DPadUp = button(Up); s.DPadDown = button(Down);
     s.DPadLeft = button(Left); s.DPadRight = button(Right);
     s.Start = button(Start); s.Select = button(Back);
+    if (menu) {
+        s.ButtonCross = button(A);
+        s.ButtonCircle = button(X); // native map waypoint action
+        s.LeftShoulder2 = button(LB); s.RightShoulder2 = button(RB); // map zoom
+        // Menu, View and B use the native Esc path; no vehicle/fire bindings here.
+        return s;
+    }
     s.ButtonTriangle = button(Y);
     s.ButtonSquare = button(X);
     s.ButtonCross = button(A);
@@ -45,4 +52,49 @@ inline game::CControllerState MapGamepad(const PadSample& p, bool vehicle) {
     }
     return s;
 }
+
+struct RoutedPad { PadSample sample{}; bool escape = false; };
+class PadRouter {
+    bool active = false, wasMenu = false, blockLT = false, blockRT = false;
+    uint16_t previous = 0, blocked = 0;
+public:
+    RoutedPad Update(PadSample sample, bool enabled, bool menu) {
+        if (!enabled) {
+            active = false;
+            previous = blocked = 0;
+            return {};
+        }
+        if (!active || menu != wasMenu) {
+            // Native menu open/close clears CPad. Track physical buttons separately
+            // so a held Menu cannot reopen it and a held B cannot fire on exit.
+            blocked |= sample.buttons;
+            blockLT = sample.lt > 30;
+            blockRT = sample.rt > 30;
+        }
+        active = true;
+        wasMenu = menu;
+        blocked &= sample.buttons;
+        sample.buttons &= ~blocked;
+        if (sample.lt <= 30) blockLT = false;
+        if (sample.rt <= 30) blockRT = false;
+        if (blockLT) sample.lt = 0;
+        if (blockRT) sample.rt = 0;
+        const auto pressed = static_cast<uint16_t>(sample.buttons & ~previous);
+        previous = sample.buttons;
+        return {sample, (pressed & Start) != 0 || (menu && (pressed & (Back | B)) != 0)};
+    }
+};
+
+// CMenuManager on PC reads CKeyboardState::esc, including inlined checks. Bridge
+// only this process's menu call, restoring keyboard history even if it clears pads.
+class MenuEscapeScope {
+    int16_t &current, &previous;
+    int16_t savedCurrent, savedPrevious;
+public:
+    MenuEscapeScope(int16_t& now, int16_t& before)
+        : current(now), previous(before), savedCurrent(now), savedPrevious(before) { current = 255; previous = 0; }
+    MenuEscapeScope(const MenuEscapeScope&) = delete;
+    MenuEscapeScope& operator=(const MenuEscapeScope&) = delete;
+    ~MenuEscapeScope() { current = savedCurrent; previous = savedPrevious; }
+};
 }

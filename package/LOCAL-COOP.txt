@@ -24,8 +24,10 @@ Return focus to the keyboard player afterward. Full controller overlay navigatio
 On foot, LB + RB is pickup/action. In vehicles, X is secondary action/nitro.
 See docs/LOCAL_COOP.md in the source repository for controls and technical details.
 
-Preview 6 refreshes GTA post-effect buffers and filter coordinates when a cutscene
-changes the host viewport size, correcting Preview 5's stale half-screen effect data.
+Preview 7: Xbox Menu/Start opens the native GTA menu; View/Back and B go back in menus.
+A confirms. D-pad/left stick navigates. On the map, X sets a waypoint and LB/RB zooms.
+View/Back changes camera during gameplay. Held buttons cannot reopen menus or fire on exit.
+Includes Preview 6's post-effect buffer correction for fullscreen cutscene resizing.
 Host-only radio, cutscene soundtrack and shared mission dialogue are retained.
 The host's cutscenes fill the fullscreen window; the selected split returns afterward.
 The partner keeps running. Keyboard/controller assignments remain unchanged.

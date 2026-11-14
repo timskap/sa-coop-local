@@ -76,7 +76,20 @@ DirectInput-only controllers are not implemented. Controller numbers refer to Wi
 | LB + RB | Pickup / action (GTA L1) | Look behind |
 | Left stick click | Crouch | Horn |
 | Right stick click | Look behind | Look behind |
-| D-pad / Back / Start | GTA's normal pad actions, camera and pause | GTA's normal pad actions, camera and pause |
+| D-pad | GTA's normal pad actions | GTA's normal pad actions |
+| View / Back / Select | Change camera view | Change camera view |
+| Menu / Start | Open native GTA menu | Open native GTA menu |
+
+In GTA's native menu, **A** confirms, **B / View / Back** goes back (or closes the pause root), and **Menu / Start**
+acts as Escape. D-pad/left stick navigates; on the map, **X** toggles the waypoint and **LB / RB** zooms.
+Each controller operates its own game's menu without taking Windows focus from the keyboard seat. As before,
+the co-op world continues running underneath the menu.
+
+Preview 7 bridges controller menu presses to GTA PC's native Escape checks for the duration of that process's
+menu update. Mapping a controller's Start field alone did not reach those checks. View/Back retains its camera
+action during gameplay and now navigates back in menus. Button history is tracked independently of the native
+menu clearing its pads: holding Menu does not immediately close/reopen it, and holding B when leaving does not fire.
+Focus loss, overlay capture and controller reconnection require held buttons to be released before acting again.
 
 Keyboard/mouse uses the game's existing bindings. The controller seat uses GTA's classic pad mode with the mapping
 above. Controllers continue to drive their own player while the shared fullscreen window is foreground. Alt-tabbing to an
@@ -152,6 +165,9 @@ pickup, vehicle actions and neutral input. The Windows UI smoke test checks real
 Render-resize regressions cover split/full/vertical transitions, exact-size UV refresh within one texture capacity,
 delayed device reset, missing/undersized allocations and retry after failure. They test the production refresh gating,
 not GTA's native raster allocator or rendered pixels.
+Controller-menu regressions cover Menu/View/B press edges, the scoped native Escape bridge and restoration of keyboard
+history, menu/gameplay mappings, held buttons across open/close, disabled/reconnected input and independent controller seats.
+They do not run the GTA frontend or exercise a physical Xbox controller.
 Save-file tests exercise paths longer than GTA's legacy buffers, scoped native prefixes, alignment without payload changes,
 snapshot transfers, corrupt/truncated saves and recovery from a previous storage error. They test the shared path/checksum logic, without executing GTA's native save routines.
 Session tests use dummy game/server processes to check private environments, failed starts, host-before-partner readiness,
