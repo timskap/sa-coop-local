@@ -1,0 +1,70 @@
+# Publishes the already-tested Windows artifact without rebuilding or changing its source tag.
+# The run, artifact, digest and source commit are deliberately pinned for this preview.
+name: Publish local co-op preview
+
+on:
+  push:
+    branches: [feature/local-split-screen]
+    paths: [.github/workflows/publish-local-preview.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-local-preview-1
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: 31500475339adae0c216024ebff09036dcd3d9ed
+      RELEASE_TAG: v0.3.3-local.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify and download the successful Windows build
+        shell: bash
+        run: |
+          set -euo pipefail
+          result=$(gh api "repos/$GH_REPO/actions/runs/43599158082" --jq '.head_sha + " " + .conclusion')
+          test "$result" = "$SOURCE_SHA success"
+          gh api "repos/$GH_REPO/actions/artifacts/14114824474/zip" > "$RUNNER_TEMP/local-actions-artifact.zip"
+          printf '%s  %s\n' '4f9e8a2ae857bd2b101f1ae1d0149efe6f50a0872574819be350e4d5224beeda' "$RUNNER_TEMP/local-actions-artifact.zip" | sha256sum --check
+
+      - name: Verify the install archive and generate its checksum
+        shell: python
+        run: |
+          import hashlib
+          import io
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile(Path(os.environ['RUNNER_TEMP']) / 'local-actions-artifact.zip') as outer:
+              data = outer.read('SA-COOP.zip')
+          with ZipFile(io.BytesIO(data)) as package:
+              required = {'coop-local.exe', 'coop.asi', 'coop/coop-server.exe', 'LOCAL-COOP.txt'}
+              assert required.issubset(package.namelist()), 'Missing install files'
+              assert package.testzip() is None, 'Invalid ZIP CRC'
+          Path('release').mkdir(exist_ok=True)
+          Path('release/SA-COOP.zip').write_bytes(data)
+          digest = hashlib.sha256(data).hexdigest()
+          Path('release/SHA256SUMS.txt').write_text(f'{digest}  SA-COOP.zip\n', encoding='ascii')
+          print(f'Validated SA-COOP.zip: {len(data)} bytes, SHA-256 {digest}')
+
+      - name: Publish the prerelease with the tested archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'This release already exists; refusing to replace its assets.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" release/SA-COOP.zip release/SHA256SUMS.txt \
+            --target "$SOURCE_SHA" --prerelease --latest=false \
+            --title 'SA:COOP Local Split-Screen - Preview 1' \
+            --notes-file .github/local-release-notes.md
