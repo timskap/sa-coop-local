@@ -27,6 +27,7 @@ struct Config {
     std::wstring worldFile;  // optional initial world save (passed by the launcher)
     bool newGame = false;    // the host starts a new game: the stored world belongs to an older one
     std::string hostName;    // nickname that gets the host role (empty = first player)
+    bool localOnly = false;  // loopback only; never publishes an invite or opens router ports
     bool internet = true;    // UPnP + STUN + invite code + hole punching
     std::string turn;        // optional TURN relay for friends behind any NAT (see TurnRelay)
 };

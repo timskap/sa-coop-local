@@ -65,6 +65,13 @@ struct ClientConfig {
     bool firewallPrompt = true;       // hosting: ask Windows to let the server through its firewall (off in test setups)
     std::string serverData = "server-data";  // the hosted server's folder in coop\ (test setups keep theirs apart)
 
+    // [local] Set only by coop-local.exe; ordinary online sessions retain their input behavior.
+    bool localCoop = false;
+    int localDevice = -2;             // -1 keyboard/mouse, 0..3 XInput; -2 invalid (no input)
+    unsigned localSession = 0;        // launcher PID, used to recognize the other half's window
+    std::string localReadyEvent;      // signalled once the host has joined its own loopback server
+    std::wstring dataDir;             // mutable world/crash/server files; isolated per local player
+
     std::wstring coopDir;             // directory with coop.dll (…\coop\)
     std::wstring gameDir;             // directory with gta_sa.exe
     std::wstring iniPath;

@@ -1,3 +1,6 @@
+> **Local split-screen fork:** experimental two-player launcher with keyboard/gamepad side selection.
+> See [setup, controls and testing status](docs/LOCAL_COOP.md). Run `coop-local.exe` after installing this build.
+
 <p align="center">
   <img src="docs/images/logo.png" alt="SA:COOP" width="440">
 </p>

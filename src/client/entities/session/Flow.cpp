@@ -153,9 +153,11 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
                 "antivirus exclusions and unpack the mod again."));
         return false;
     }
-    StopLeftoverServers(exe);
-    LetServerThroughFirewall(exe);
-    std::wstring cmd = L"\"" + exe + L"\" --port " + std::to_wstring(g_port) + L" --data \"" + cfg.coopDir +
+    if (!cfg.localCoop) {
+        StopLeftoverServers(exe);
+        LetServerThroughFirewall(exe);
+    }
+    std::wstring cmd = L"\"" + exe + L"\" --port " + std::to_wstring(g_port) + L" --data \"" + cfg.dataDir +
                        Utf8ToWide(cfg.serverData) + L"\" --name \"" + Utf8ToWide(cfg.nickname) + L"\" --host \"" +
                        Utf8ToWide(cfg.nickname) + L"\"";
     if (!g_password.empty()) cmd += L" --password \"" + Utf8ToWide(g_password) + L"\"";
@@ -165,6 +167,7 @@ bool StartServerProcess(const std::wstring& worldPath, bool newGame) {
     cmd += cfg.partnerTeleport ? L" --partner-teleport 1" : L" --partner-teleport 0";
     cmd += cfg.sharedLife ? L" --shared-life 1" : L" --shared-life 0";
     cmd += L" --max " + std::to_wstring(cfg.maxPlayers);
+    if (cfg.localCoop) cmd += L" --local-only";
 
     if (!g_serverJob) {
         g_serverJob = CreateJobObjectW(nullptr, nullptr);
@@ -251,6 +254,10 @@ void OnOnline() {
         net.Send(CH_BULK, w);
         SetPhase(Phase::WaitingWorld);
     }
+    if (Cfg().localCoop && !Cfg().localReadyEvent.empty()) {
+        HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, Utf8ToWide(Cfg().localReadyEvent).c_str());
+        if (event) { SetEvent(event); CloseHandle(event); }
+    }
 }
 
 }  // namespace
@@ -285,7 +292,7 @@ void SaveConnectSettings() {
 Phase GetPhase() { return g_phase; }
 const std::string& LastError() { return g_error; }
 
-std::wstring PartnerWorldPath() { return Cfg().coopDir + L"world\\partner_world.b"; }
+std::wstring PartnerWorldPath() { return Cfg().dataDir + L"world\\partner_world.b"; }
 
 std::string StatusText() {
     auto& net = Net();
@@ -427,7 +434,7 @@ void Host(int slot, uint16_t port, const std::string& password) {
         }
     } else if (slot == 0 && core::IsPlayerReady()) {
         std::vector<uint8_t> snap;
-        if (core::SaveWorldSnapshot(snap)) world = Cfg().coopDir + L"world\\host_snapshot.b";
+        if (core::SaveWorldSnapshot(snap)) world = Cfg().dataDir + L"world\\host_snapshot.b";
     }
     StopServerProcess();
     if (!StartServerProcess(world, slot < 0)) return;
@@ -774,7 +781,7 @@ void LoadHostWorld(const std::vector<uint8_t>& data) {
                 "need the same game version and the same mods that change the story."));
         return;
     }
-    EnsureDirectory(Cfg().coopDir + L"world");
+    EnsureDirectory(Cfg().dataDir + L"world");
     std::wstring path = PartnerWorldPath();
     // An antivirus holding the file a moment, a folder with no write access (a game in Program Files, Windows' controlled
     // folder access): a few tries, then the user's own folder.

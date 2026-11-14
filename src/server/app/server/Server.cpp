@@ -35,6 +35,7 @@ bool Server::Start(const Config& cfg) {
     }
     ENetAddress addr{};
     addr.host = ENET_HOST_ANY;
+    if (m_cfg.localOnly) enet_address_set_host_ip(&addr, "127.0.0.1");
     addr.port = m_cfg.port;
     // a couple of spare peers so that "server full" can be reported politely
     m_host = enet_host_create(&addr, (size_t)m_cfg.maxPlayers + 2, CH_COUNT, 0, 0);
@@ -44,7 +45,7 @@ bool Server::Start(const Config& cfg) {
     }
     enet_host_compress_with_range_coder(m_host);
     m_host->mtu = net::kMtu;
-    if (m_cfg.internet) m_internet.Start(m_host, m_cfg.port, m_cfg.turn);
+    if (m_cfg.internet && !m_cfg.localOnly) m_internet.Start(m_host, m_cfg.port, m_cfg.turn);
 
     // initial world: explicit file from the launcher, otherwise the last uploaded one
     if (!m_cfg.worldFile.empty()) {

@@ -26,9 +26,10 @@ ROOT = Path(__file__).resolve().parent.parent
 TC = ROOT / "toolchain" / "llvm-mingw" / "bin"
 BUILD = ROOT / "build"
 
-CC = TC / "i686-w64-mingw32-clang.exe"
-CXX = TC / "i686-w64-mingw32-clang++.exe"
-WINDRES = TC / "i686-w64-mingw32-windres.exe"
+EXE_SUFFIX = ".exe" if os.name == "nt" else ""
+CC = TC / ("i686-w64-mingw32-clang" + EXE_SUFFIX)
+CXX = TC / ("i686-w64-mingw32-clang++" + EXE_SUFFIX)
+WINDRES = TC / ("i686-w64-mingw32-windres" + EXE_SUFFIX)
 
 COMMON_DEFS = ["-DWIN32_LEAN_AND_MEAN", "-DNOMINMAX", "-D_WIN32_WINNT=0x0601", "-D_CRT_SECURE_NO_WARNINGS"]
 WARN = ["-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-missing-field-initializers",
@@ -88,7 +89,15 @@ def targets(extra=()):
         "libs": ["-lkernel32", "-luser32"],
         "ldflags": [str(ROOT / "src" / "loader" / "app" / "entry" / "vorbisFile.def")],
     }
-    return {"client": client, "server": server, "loader": loader}
+    local = {
+        "name": "local", "kind": "exe", "out": "coop-local.exe", "gui": True,
+        "sources": glob("src/local", "**/*.cpp"),
+        "includes": ["src", "src/local"], "defines": [], "cflags": [],
+        "deps": [lib("local-common", ["src/common/lib/ini/Ini.cpp", "src/common/lib/util/Util.cpp"], includes=["src"])],
+        "libs": ["-lws2_32", "-lgdi32", "-luser32", "-lkernel32", "-lshell32"],
+        "ldflags": ["-municode"],
+    }
+    return {"client": client, "server": server, "loader": loader, "local": local}
 
 
 def parse_depfile(text: str):
@@ -244,6 +253,7 @@ def assemble_dist(debug):
     shutil.rmtree(dist, ignore_errors=True)
     (dist / "coop").mkdir(parents=True)
     shutil.copy2(src / "coop.dll", dist / "coop.asi")  # any ASI loader picks up *.asi
+    shutil.copy2(src / "coop-local.exe", dist / "coop-local.exe")
     for name in ("coop.pdb", "coop-server.exe"):
         if (src / name).exists():
             shutil.copy2(src / name, dist / "coop" / name)
