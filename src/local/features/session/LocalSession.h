@@ -24,6 +24,7 @@ private:
     Phase phase = Phase::Idle;
     std::wstring gameDir, dataDir, status;
     std::array<HANDLE, 2> processes{}, ready{};
+    HANDLE job = nullptr;
     std::array<DWORD, 2> pids{};
     std::array<std::wstring, 2> configs{}, eventNames{};
     int keyboardSeat = 0;

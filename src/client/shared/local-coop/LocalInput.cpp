@@ -1,4 +1,5 @@
 #include "shared/local-coop/LocalInput.h"
+#include "shared/local-coop/Gamepad.h"
 
 #include <windows.h>
 #include <algorithm>
@@ -23,37 +24,12 @@ bool SessionFocused() {
 game::CControllerState Controller() {
     game::CControllerState s{};
     XINPUT_STATE input{};
-    if (!SessionFocused() || local::ReadPad(Cfg().localDevice, input) != ERROR_SUCCESS) return s;
+    if (!HasInputFocus() || local::ReadPad(Cfg().localDevice, input) != ERROR_SUCCESS) return s;
     const auto& p = input.Gamepad;
-    auto button = [&](WORD b) -> int16_t { return (p.wButtons & b) ? 255 : 0; };
-    s.LeftStickX = local::Axis(p.sThumbLX, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-    s.LeftStickY = -local::Axis(p.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-    s.RightStickX = local::Axis(p.sThumbRX, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-    s.RightStickY = -local::Axis(p.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-    s.DPadUp = button(XINPUT_GAMEPAD_DPAD_UP);
-    s.DPadDown = button(XINPUT_GAMEPAD_DPAD_DOWN);
-    s.DPadLeft = button(XINPUT_GAMEPAD_DPAD_LEFT);
-    s.DPadRight = button(XINPUT_GAMEPAD_DPAD_RIGHT);
-    s.Start = button(XINPUT_GAMEPAD_START);
-    s.Select = button(XINPUT_GAMEPAD_BACK);
-    s.ButtonTriangle = button(XINPUT_GAMEPAD_Y);
-    s.ButtonSquare = button(XINPUT_GAMEPAD_X);
-    s.ButtonCross = button(XINPUT_GAMEPAD_A);
-    s.ButtonCircle = std::max(button(XINPUT_GAMEPAD_B), local::Trigger(p.bRightTrigger));
-    s.RightShoulder1 = local::Trigger(p.bLeftTrigger);
-    s.LeftShoulder2 = button(XINPUT_GAMEPAD_LEFT_SHOULDER);
-    s.RightShoulder2 = button(XINPUT_GAMEPAD_RIGHT_SHOULDER);
-    s.ShockButtonL = button(XINPUT_GAMEPAD_LEFT_THUMB);
-    s.ShockButtonR = button(XINPUT_GAMEPAD_RIGHT_THUMB);
     auto* ped = game::FindPlayerPed();
-    if (ped && ped->InVehicle() && !game::MenuActive()) {
-        s.ButtonCross = local::Trigger(p.bRightTrigger);
-        s.ButtonSquare = local::Trigger(p.bLeftTrigger);
-        s.ButtonCircle = button(XINPUT_GAMEPAD_B);
-        s.RightShoulder1 = button(XINPUT_GAMEPAD_A);
-        s.LeftShoulder2 = button(XINPUT_GAMEPAD_LEFT_SHOULDER);
-    }
-    return s;
+    return MapGamepad({p.wButtons, p.bLeftTrigger, p.bRightTrigger,
+                       p.sThumbLX, p.sThumbLY, p.sThumbRX, p.sThumbRY},
+                      ped && ped->InVehicle() && !game::MenuActive());
 }
 void __fastcall Update(game::CPad* pad, void* edx, int number) {
     // Hook before GTA reconciles input, so OldState, horn/steering histories and JustDown stay coherent.
@@ -76,6 +52,8 @@ void __fastcall Update(game::CPad* pad, void* edx, int number) {
     original(pad, edx, number);
 }
 }  // namespace
+
+bool HasInputFocus() { return UsesGamepad() ? SessionFocused() : game::IsForeground(); }
 
 bool UsesGamepad() { return Cfg().localCoop && Cfg().localDevice != -1; }
 void RegisterWindow(void* window) {

@@ -1,6 +1,8 @@
 #include <cassert>
 #include <iostream>
+#include <cstring>
 #include "common/lib/local-coop/Setup.h"
+#include "shared/local-coop/Gamepad.h"
 
 using namespace coop::local;
 int main() {
@@ -71,5 +73,33 @@ int main() {
         previous = trigger;
     }
     assert(Trigger(255) == 255);
+    using namespace coop::localinput;
+    const auto pickup = MapGamepad({LB | RB}, false);
+    assert(pickup.LeftShoulder1 == 255 && !pickup.LeftShoulder2 && !pickup.RightShoulder2);
+    assert(!pickup.ButtonCircle && !pickup.ButtonCross && !pickup.ButtonSquare);
+    assert(MapGamepad({LB}, false).LeftShoulder2 == 255);
+    assert(MapGamepad({RB}, false).RightShoulder2 == 255);
+    const auto nitro = MapGamepad({X}, true);
+    assert(nitro.LeftShoulder1 == 255 && !nitro.ButtonSquare && !nitro.ButtonCross);
+    const auto drive = MapGamepad({A, 255, 255}, true);
+    assert(drive.ButtonCross == 255 && drive.ButtonSquare == 255 && drive.RightShoulder1 == 255);
+    assert(!drive.ButtonCircle);  // accelerating must not shoot
+    const auto onFoot = MapGamepad({X, 255, 255}, false);
+    assert(onFoot.ButtonSquare == 255 && onFoot.RightShoulder1 == 255 && onFoot.ButtonCircle == 255);
+    const auto sticks = MapGamepad({0, 0, 0, -32768, 32767, 32767, -32768}, false);
+    assert(sticks.LeftStickX == -128 && sticks.LeftStickY == -128);
+    assert(sticks.RightStickX == 128 && sticks.RightStickY == 128);
+    const game::CControllerState zero{};
+    for (bool vehicle : {false, true}) {
+        const auto neutral = MapGamepad({}, vehicle);
+        assert(std::memcmp(&zero, &neutral, sizeof(zero)) == 0);
+        // Exhaust every button combination for invalid ranges or uninitialised output.
+        for (unsigned buttons = 0; buttons <= 0xFFFF; ++buttons) {
+            const auto state = MapGamepad({static_cast<uint16_t>(buttons)}, vehicle);
+            int16_t values[sizeof(state) / sizeof(int16_t)];
+            std::memcpy(values, &state, sizeof(state));
+            for (int16_t value : values) assert(value == 0 || value == 255);
+        }
+    }
     std::cout << "Local co-op: assignments, readiness, disconnects, layouts and input ranges passed\n";
 }

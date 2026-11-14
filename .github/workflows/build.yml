@@ -49,6 +49,9 @@ jobs:
       - name: Smoke test the native local co-op launcher
         run: python tools/test_local_launcher.py
 
+      - name: Test local session startup and process cleanup
+        run: python tools/test_local_session.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: SA-COOP
@@ -60,4 +63,6 @@ jobs:
         with:
           name: SA:COOP ${{ github.ref_name }}
           files: dist/SA-COOP.zip
-          body_path: .github/release-notes.md
+          body_path: ${{ contains(github.ref_name, '-local.') && '.github/local-release-notes.md' || '.github/release-notes.md' }}
+          prerelease: ${{ contains(github.ref_name, '-local.') }}
+          make_latest: ${{ contains(github.ref_name, '-local.') && 'false' || 'true' }}

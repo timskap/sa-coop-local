@@ -44,6 +44,7 @@
 #include "shared/config/Config.h"
 #include "shared/game/Anim.h"
 #include "shared/game/Game.h"
+#include "shared/local-coop/LocalInput.h"
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
@@ -3285,7 +3286,7 @@ void SkipVote(uint8_t who, bool yes) {
 bool __cdecl HookSkipButton() {
     bool down = g_origSkipButton();
     if (!Net().Online()) return down;
-    down = down && game::IsForeground();  // the game also says yes for a window in the background
+    down = down && localinput::HasInputFocus();  // local controllers also play in the partner window's background
     bool press = down && !g_skipHeld;
     g_skipHeld = down;
     if (press && !g_skipYes.count(Net().MyId())) SkipVote(Net().MyId(), true);

@@ -873,6 +873,9 @@ void ApplyWindowPlacement() {
 
 void Apply() {
     auto& cfg = Cfg();
+    // Match the launcher before GTA creates its window or queries display dimensions.
+    // Otherwise DPI virtualization shrinks/offsets the physical-pixel split at 125%/150% scaling.
+    if (cfg.localCoop) SetProcessDPIAware();
 
     // Native 2-player (split screen) mode must never activate: our remote player is a CPlayerPed
     // registered in CWorld::Players[1] only while it is processed. CGameLogic::IsCoopGameGoingOn -> false

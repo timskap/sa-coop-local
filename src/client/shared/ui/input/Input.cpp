@@ -33,10 +33,10 @@ static void __cdecl HookFocusMenu() {
 }
 
 static LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    // A controller seat never receives the keyboard assigned to its partner. Keep OS shortcuts.
-    if (localinput::UsesGamepad() && !In().KeyboardCaptured() &&
-        (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR)) return 0;
+    // The focused window can use F9, chat and invitation shortcuts even in a controller seat.
+    // Only SA:COOP's UI sees those keys; they must never reach GTA's gameplay keyboard state.
     if (In().OnMessage(msg, wp, lp)) return 0;
+    if (localinput::UsesGamepad() && (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR)) return 0;
     return CallWindowProcW(g_origProc, hwnd, msg, wp, lp);
 }
 

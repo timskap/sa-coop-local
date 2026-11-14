@@ -1,5 +1,6 @@
 SA:COOP LOCAL PLAY - EXPERIMENTAL
 
+Requires Windows 10 or later.
 Install this build of SA:COOP in GTA San Andreas 1.0 US first.
 Run coop-local.exe beside gta_sa.exe.
 
@@ -18,5 +19,7 @@ Save before ending the session; closing either game ends both.
 
 This feature needs Windows gameplay testing before release. Do not combine it with
 other controller/window hooks for the initial test. Custom SA:COOP overlays still
-use keyboard/mouse; full controller navigation of those overlays is not implemented.
+use keyboard/mouse: click that player's window, then press F9 or another overlay shortcut.
+Return focus to the keyboard player afterward. Full controller overlay navigation is not implemented.
+On foot, LB + RB is pickup/action. In vehicles, X is secondary action/nitro.
 See docs/LOCAL_COOP.md in the source repository for controls and technical details.

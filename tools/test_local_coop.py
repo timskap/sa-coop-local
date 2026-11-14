@@ -13,5 +13,6 @@ if not compiler or not Path(compiler).exists():
 with tempfile.TemporaryDirectory(prefix="sa-coop-tests-") as directory:
     exe = Path(directory) / ("local-tests.exe" if os.name == "nt" else "local-tests")
     subprocess.run([str(compiler), "-std=c++20", "-Wall", "-Wextra", "-Werror", "-static", "-I", str(ROOT / "src"),
+                    "-I", str(ROOT / "src/client"),
                     str(ROOT / "tests/local_coop_tests.cpp"), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
