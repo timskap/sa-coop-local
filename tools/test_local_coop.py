@@ -11,8 +11,9 @@ compiler = (ROOT / "toolchain/llvm-mingw/bin/x86_64-w64-mingw32-clang++.exe") if
 if not compiler or not Path(compiler).exists():
     raise SystemExit("Install g++ on Linux, or run tools/get-toolchain.ps1 on Windows first")
 with tempfile.TemporaryDirectory(prefix="sa-coop-tests-") as directory:
-    exe = Path(directory) / ("local-tests.exe" if os.name == "nt" else "local-tests")
-    subprocess.run([str(compiler), "-std=c++20", "-Wall", "-Wextra", "-Werror", "-static", "-I", str(ROOT / "src"),
-                    "-I", str(ROOT / "src/client"),
-                    str(ROOT / "tests/local_coop_tests.cpp"), "-o", str(exe)], check=True)
-    subprocess.run([str(exe)], check=True)
+    for test in ("local_coop_tests", "save_file_tests"):
+        exe = Path(directory) / (test + (".exe" if os.name == "nt" else ""))
+        subprocess.run([str(compiler), "-std=c++20", "-Wall", "-Wextra", "-Werror", "-static", "-I", str(ROOT / "src"),
+                        "-I", str(ROOT / "src/client"),
+                        str(ROOT / "tests" / (test + ".cpp")), "-o", str(exe)], check=True)
+        subprocess.run([str(exe), directory], check=True)

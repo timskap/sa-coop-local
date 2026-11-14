@@ -809,8 +809,8 @@ void LoadHostWorld(const std::vector<uint8_t>& data) {
                                        : TR("Мир хоста получен. Загружаем...", "Got the host's world. Loading..."));
     g_follower = g_prologueWait = false;
     if (!core::LoadSaveFile(path)) {
-        Fail(TR("Мир хоста не загрузился. Скорее всего, у вас разные версии игры или модов.",
-                "The host's world did not load. Most likely your game or mod versions differ."));
+        Fail(Format(TR("Не удалось загрузить мир хоста: %s.", "Could not load the host's world: %s."),
+                    core::SaveLoadError().c_str()));
         return;
     }
     SetPhase(Phase::LoadingWorld);

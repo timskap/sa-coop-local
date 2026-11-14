@@ -24,6 +24,7 @@
 #include "shared/api/net-session/Session.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
+#include "shared/game/SaveFile.h"
 #include "shared/lib/memory/Memory.h"
 #include "shared/ui/chat/Chat.h"
 #include "shared/ui/input/Input.h"
@@ -57,12 +58,25 @@ uint32_t g_frameNo = 0;
 
 // ----- save file redirection -----
 std::string g_redirectPath;  // ANSI path; when set, slot kRedirectSlot maps to this file
+std::string g_snapshotPath, g_saveLoadError;
+bool g_saveRedirectReady = false;
 using GenFilenameFn = void(__fastcall*)(void*, void*, int, char*);
 GenFilenameFn g_origGenerateGameFilename = nullptr;
+using OpenFileFn = void*(__cdecl*)(const char*, const char*);
+OpenFileFn g_origOpenFile = nullptr;
+using OpenWriteFn = void*(__cdecl*)(const char*);
+OpenWriteFn g_origOpenWrite = nullptr;
+
+void* __cdecl HookOpenFile(const char* path, const char* mode) {
+    return g_origOpenFile(savefile::Resolve(path, g_redirectPath, g_snapshotPath), mode);
+}
+void* __cdecl HookOpenWrite(const char* path) {
+    return g_origOpenWrite(savefile::Resolve(path, g_redirectPath, g_snapshotPath));
+}
 
 void __fastcall HookGenerateGameFilename(void* self, void* edx, int slot, char* out) {
     if (slot == flow::kRedirectSlot && !g_redirectPath.empty()) {
-        strcpy(out, g_redirectPath.c_str());
+        strcpy(out, savefile::kLoadToken);
         return;
     }
     g_origGenerateGameFilename(self, edx, slot, out);
@@ -570,14 +584,17 @@ static std::string ToAnsiPath(const std::wstring& w) {
     WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), -1, s.data(), n, nullptr, &bad);
     s.resize(strlen(s.c_str()));
     if (bad) {
-        // fall back to the 8.3 short name which is always ASCII
+        // Try the 8.3 alias, but verify that it really is representable in this code page.
         wchar_t shortPath[MAX_PATH];
-        if (GetShortPathNameW(w.c_str(), shortPath, MAX_PATH)) {
-            n = WideCharToMultiByte(CP_ACP, 0, shortPath, -1, nullptr, 0, nullptr, nullptr);
+        const DWORD length = GetShortPathNameW(w.c_str(), shortPath, MAX_PATH);
+        if (length && length < MAX_PATH) {
+            bad = FALSE;
+            n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, shortPath, -1, nullptr, 0, nullptr, &bad);
             s.assign(n, '\0');
-            WideCharToMultiByte(CP_ACP, 0, shortPath, -1, s.data(), n, nullptr, nullptr);
+            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, shortPath, -1, s.data(), n, nullptr, &bad);
             s.resize(strlen(s.c_str()));
         }
+        if (bad) return {};  // never load a different '?' path after a lossy conversion
     }
     return s;
 }
@@ -597,23 +614,34 @@ void KeepGameFolder() {
 }
 
 bool LoadSaveFile(const std::wstring& path) {
-    if (!FileExists(path)) {
-        LOGE("LoadSaveFile: no file %s", WideToUtf8(path).c_str());
+    g_saveLoadError.clear();
+    auto fail = [&](const char* reason) {
+        g_saveLoadError = reason;
+        LOGE("LoadSaveFile: %s; path %s", reason, WideToUtf8(path).c_str());
+        g_redirectPath.clear();
         return false;
-    }
+    };
+    if (!g_saveRedirectReady)
+        return fail(TR("Не установлены перехваты загрузки сохранений", "Save-file redirection hooks are unavailable"));
+    std::vector<uint8_t> bytes;
+    if (!ReadFileBytes(path, bytes))
+        return fail(TR("Не удалось прочитать файл сохранения", "Could not read the save file"));
+    if (!savefile::Valid(bytes))
+        return fail(TR("Контрольная сумма сохранения неверна: файл повреждён или записан не полностью",
+                       "The save checksum is invalid: the file is damaged or incomplete"));
     g_redirectPath = ToAnsiPath(path);
-    if (g_redirectPath.size() >= 250) {
-        LOGE("Save path too long");
-        g_redirectPath.clear();
-        return false;
-    }
+    if (g_redirectPath.empty())
+        return fail(TR("GTA не может прочитать символы в пути к сохранению", "GTA cannot represent the save-file path"));
     const uintptr_t mm = game::addr::MenuManager;
+    int32_t& error = game::Ref<int32_t>(0xC17034);  // C_PcSave::error
+    LOGI("Validating save: %u bytes, path %u bytes via %s, previous storage error %d",
+         (unsigned)bytes.size(), (unsigned)g_redirectPath.size(), savefile::kLoadToken, error);
     // CGenericGameStorage::CheckSlotDataValid(slot) — reads the file through GenerateGameFilename
-    bool valid = game::Call<0x5D1380, bool>(flow::kRedirectSlot);
+    bool valid = savefile::Validate(error, [] { return game::Call<0x5D1380, bool>(flow::kRedirectSlot); });
     if (!valid) {
-        LOGE("Save file is not valid: %s", g_redirectPath.c_str());
-        g_redirectPath.clear();
-        return false;
+        LOGE("Native save validation failed: storage error %d, path %s", error, g_redirectPath.c_str());
+        return fail(TR("GTA не смогла открыть или проверить сохранение; подробности в local.log",
+                       "GTA could not open or validate the save; see local.log for details"));
     }
     game::Ref<uint8_t>(mm + 0x15F) = (uint8_t)flow::kRedirectSlot;  // m_SelectedSlot
     if (!game::Ref<uint8_t>(mm + 0xE9)) {                            // !m_bMainMenuSwitch -> in game
@@ -626,6 +654,8 @@ bool LoadSaveFile(const std::wstring& path) {
     KeepGameFolder();
     return true;
 }
+
+const std::string& SaveLoadError() { return g_saveLoadError; }
 
 bool StartNewGame() {  // what the menu's "Start new game, yes" does (MENU_ACTION_STANDARD_GAME)
     const uintptr_t mm = game::addr::MenuManager;
@@ -650,16 +680,17 @@ bool SavingSnapshot() { return g_snapshot; }
 
 bool SaveWorldSnapshot(std::vector<uint8_t>& out) {
     // the game never saves with the player in a vehicle: loading such a save leaves no player
-    if (!IsPlayerReady() || IsOnMission() || game::FindPlayerPed(0)->InVehicle()) return false;
+    if (!g_saveRedirectReady || !IsPlayerReady() || IsOnMission() || game::FindPlayerPed(0)->InVehicle()) return false;
     std::wstring tmp = Cfg().dataDir + L"world\\host_snapshot.b";
     EnsureDirectory(Cfg().dataDir + L"world");
     std::string ansi = ToAnsiPath(tmp);
-    if (ansi.size() >= 250) return false;
+    if (ansi.empty()) { LOGE("Snapshot path cannot be represented by GTA: %s", WideToUtf8(tmp).c_str()); return false; }
     // CGenericGameStorage::ms_SaveFileName — GenericSave writes to this path
     char* saveName = (char*)0xC16DB8;
-    char backup[260];
+    char backup[256];
     memcpy(backup, saveName, sizeof(backup));
-    strcpy(saveName, ansi.c_str());
+    g_snapshotPath = ansi;
+    strcpy(saveName, savefile::kSnapshotToken);
     // GenericSave ends with CPad::UpdatePads (0x5D171F), a second update in this frame that ate the keys pressed just
     // now: the pads, the keyboard and the mouse are put back as they were (CPad::NewMouseControllerState and Old)
     const std::pair<uintptr_t, size_t> input[] = {{game::addr::Pads, 2 * sizeof(game::CPad)}, {game::addr::NewKeyState, 0x270},
@@ -667,15 +698,23 @@ bool SaveWorldSnapshot(std::vector<uint8_t>& out) {
     std::vector<uint8_t> kept;
     for (auto [at, size] : input) kept.insert(kept.end(), (uint8_t*)at, (uint8_t*)at + size);
     g_snapshot = true;
-    bool ok = game::Call<0x5D13E0, bool>(0);  // CGenericGameStorage::GenericSave
+    bool ok = savefile::Validate(game::Ref<int32_t>(0xC17034), [] {
+        return game::Call<0x5D13E0, bool>();  // CGenericGameStorage::GenericSave (no arguments)
+    });
     g_snapshot = false;
     for (size_t pos = 0; auto [at, size] : input) memcpy((void*)at, kept.data() + pos, size), pos += size;
     memcpy(saveName, backup, sizeof(backup));
+    g_snapshotPath.clear();
     if (!ok) {
         LOGW("GenericSave failed");
         return false;
     }
-    return ReadFileBytes(tmp, out) && out.size() > 1024;
+    if (!ReadFileBytes(tmp, out) || out.size() <= 1024 || !savefile::Valid(out)) {
+        LOGW("Snapshot was not published: unreadable, incomplete or invalid checksum (%u bytes)", (unsigned)out.size());
+        out.clear();
+        return false;
+    }
+    return true;
 }
 
 void Init(void* hModule) {
@@ -730,7 +769,11 @@ void Init(void* hModule) {
     mem::RedirectCallFn(0x53E87D, &HookEndUpdateMenu, &g_origEndUpdateMenu);      // FrontendIdle -> RwCameraEndUpdate
     mem::HookFn(0x58D490, &HookHudAfterFade, &g_origHudAfterFade, "CHud::DrawAfterFade");
     mem::RedirectCallFn(0x53E4FA, &HookRadioName, &g_origRadioName);  // Render2dStuff -> DisplayRadioStationName
-    mem::HookFn(0x6190A0, &HookGenerateGameFilename, &g_origGenerateGameFilename, "C_PcSave::GenerateGameFilename");
+    const bool filenameHook = mem::HookFn(0x6190A0, &HookGenerateGameFilename, &g_origGenerateGameFilename,
+                                         "C_PcSave::GenerateGameFilename");
+    const bool openHook = mem::HookFn(0x538900, &HookOpenFile, &g_origOpenFile, "CFileMgr::OpenFile (save redirection)");
+    const bool writeHook = mem::HookFn(0x538910, &HookOpenWrite, &g_origOpenWrite, "CFileMgr::OpenFileForWriting (save redirection)");
+    g_saveRedirectReady = filenameHook && openHook && writeHook;
     mem::HookFn(0x53C550, &HookShutDownForRestart, &g_origShutDownForRestart, "CGame::ShutDownForRestart");
     mem::HookFn(0x53C680, &HookInitialiseWhenRestarting, &g_origInitWhenRestarting, "CGame::InitialiseWhenRestarting");
 

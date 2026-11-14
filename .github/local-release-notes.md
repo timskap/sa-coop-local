@@ -1,27 +1,26 @@
 Experimental local two-player split-screen for GTA San Andreas 1.0 US on Windows 10 or later.
 
-Preview 2 fixes issues found in a follow-up review:
-- Controller seats can use F9, chat and invitation shortcuts in the focused window without sending keyboard gameplay input to GTA.
-- LB + RB performs pickup/action on foot; X performs the secondary vehicle action/nitro.
-- A controller player can participate in cutscene skip votes while the partner window is foreground.
-- Client DPI awareness matches the launcher for Windows display scaling above 100%.
-- Closing or forcibly terminating the launcher closes both games and their descendant server, including after a crash.
-- UNC profile paths are preserved correctly.
+Preview 3 addresses Player 2 being disconnected with a misleading version-mismatch error when Player 1 gets off the bike
+and the first host world snapshot becomes available.
 
-Download **SA-COOP.zip**, install it into your GTA SA 1.0 US folder using the included installer instructions,
-then launch **coop-local.exe** next to `gta_sa.exe`. GTA game files are not included.
-Supports keyboard/mouse + one XInput controller (either player) or two different XInput controllers.
-Top/bottom and left/right layouts use two game processes connected over localhost.
+- Full per-player save paths no longer enter GTA's two 104-byte load-name buffers. Short tokens are resolved to the real
+  paths only at the native file-open boundary.
+- A previous storage error is cleared before validating or saving the next snapshot.
+- Damaged or incomplete snapshots are rejected by checksum before upload/load.
+- File-read and native-validation failures report their actual category instead of guessing that versions differ.
+- The main.scm compatibility check is retained. No save format or network protocol changes; existing saves stay in place.
 
-This is the unchanged archive from the [successful Windows build](https://github.com/timskap/sa-coop-local/actions/runs/43601577711)
-of the tagged commit `def3e1abca08334f1b479961fa63835d83a84d68`. Compilation, input regression checks,
-the native launcher UI smoke test, and Session integration tests with dummy game/server processes passed.
-Session tests cover failed startup, environment isolation, host-before-partner readiness, restart, focus handoff,
-one player exiting, normal shutdown and abrupt launcher termination. The SHA-256 is provided in `SHA256SUMS.txt`.
+Download **SA-COOP.zip**. Close both games and `coop-local.exe`, then extract the complete archive over the same GTA folder
+and launch `coop-local.exe` again. GTA game files are not included.
 
-**Actual GTA gameplay and physical controllers have not yet been tested.** The opening prologue is played by Player 1 alone;
-Player 2 waits. Full controller navigation of custom SA:COOP overlays is not implemented: focus the desired player's window
-and use keyboard/mouse for its overlays. Save in-game before ending the session: closing either game closes both.
-This preview is not marked as a stable release.
+This is the unchanged archive from the [successful Windows build](https://github.com/timskap/sa-coop-local/actions/runs/43603016867) of commit
+`e96d8235fa6490771eb00efa46cd5a3ebf15cabe`. Full compilation, FSD/i18n checks, input tests, save-path/checksum/error-recovery
+regressions, the native launcher smoke test and process lifecycle tests passed. `SHA256SUMS.txt` contains the download checksum.
 
-[Setup, controls and testing notes](https://github.com/timskap/sa-coop-local/blob/def3e1abca08334f1b479961fa63835d83a84d68/docs/LOCAL_COOP.md)
+**The reported scenario still needs confirmation inside GTA on the user's installation.** Automated tests exercise the
+shared file logic and real launcher processes, not the proprietary game engine or physical controllers. If the problem
+persists, use **Saves / Logs** and capture `player1/local.log` and `player2/local.log` immediately after the failure.
+
+Custom mod overlays still use keyboard/mouse. Save before ending a session: closing either game closes both.
+
+[Setup and testing notes](https://github.com/timskap/sa-coop-local/blob/e96d8235fa6490771eb00efa46cd5a3ebf15cabe/docs/LOCAL_COOP.md)

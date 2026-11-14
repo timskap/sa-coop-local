@@ -23,3 +23,6 @@ use keyboard/mouse: click that player's window, then press F9 or another overlay
 Return focus to the keyboard player afterward. Full controller overlay navigation is not implemented.
 On foot, LB + RB is pickup/action. In vehicles, X is secondary action/nitro.
 See docs/LOCAL_COOP.md in the source repository for controls and technical details.
+
+Preview 3: fixes long save paths and stale storage errors when Player 1 gets off
+the bike and Player 2 loads the first host snapshot. Real GTA gameplay still needs testing.
