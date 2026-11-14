@@ -71,11 +71,16 @@ void Session::FocusKeyboard() {
     if (ContainerFocused(container))
         if (HWND player = KeyboardWindow()) PostMessageW(player, kFocusPlayer, 0, 0);
 }
+void Session::NotifyActivation(bool active) {
+    for (DWORD pid : pids)
+        if (HWND player = Window(pid, container)) PostMessageW(player, kSessionActivation, active, 0);
+}
 void Session::Resume() {
     if (!Active() || !container) return;
     if (controls) ShowWindow(controls, SW_HIDE);
     ShowWindow(container, SW_RESTORE);
     SetForegroundWindow(container);
+    NotifyActivation(ContainerFocused(container));
     FocusKeyboard();
 }
 void Session::ShowControls() {
@@ -93,6 +98,7 @@ LRESULT CALLBACK Session::ContainerProc(HWND window, UINT message, WPARAM wp, LP
     if (!self) return DefWindowProcW(window, message, wp, lp);
     switch (message) {
     case WM_ACTIVATE:
+        self->NotifyActivation(LOWORD(wp) != WA_INACTIVE && !HIWORD(wp));
         if (LOWORD(wp) != WA_INACTIVE) PostMessageW(window, kFocusKeyboard, 0, 0);
         return 0;
     case WM_SETFOCUS: case kFocusKeyboard: self->FocusKeyboard(); return 0;

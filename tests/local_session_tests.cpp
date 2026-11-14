@@ -31,6 +31,7 @@ template<class F> void Until(F done, const char* message) {
 LRESULT CALLBACK FakeWindow(HWND h, UINT m, WPARAM w, LPARAM l) {
     LRESULT result = 0;
     if (local::PlayerWindowMessage(h, GetParent(h), m, w, l, result)) return result;
+    if (m == WM_ACTIVATE) { SetPropW(h, L"TEST_ACTIVATED", reinterpret_cast<HANDLE>(static_cast<uintptr_t>(w))); return 0; }
     if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(h, m, w, l);
 }
@@ -170,6 +171,11 @@ int wmain(int argc, wchar_t** argv) {
             Check(children == 2, "Both players must be inside one window");
             session.Resume();
             Until([&] { return local::PlayerFocused(session.KeyboardWindow(), container); }, "Keyboard focus did not enter its child window");
+            Until([&] {
+                for (HWND child = GetWindow(container, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
+                    if (!GetPropW(child, L"TEST_ACTIVATED")) return false;
+                return true;
+            }, "Native activation was not forwarded to both games");
             Check(!IsWindowVisible(controls), "Setup must be hidden while playing");
             PostMessageW(session.KeyboardWindow(), WM_KEYDOWN, VK_F10, 0);
             Until([&] { return IsWindowVisible(controls) && IsIconic(container); }, "F10 did not open session controls");

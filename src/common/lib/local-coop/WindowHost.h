@@ -8,6 +8,7 @@ inline constexpr wchar_t kContainerClass[] = L"SA_COOP_FULLSCREEN";
 inline constexpr UINT kFocusPlayer = WM_APP + 0x340;
 inline constexpr UINT kFocusKeyboard = WM_APP + 0x341;
 inline constexpr UINT kSessionControls = WM_APP + 0x342;
+inline constexpr UINT kSessionActivation = WM_APP + 0x343;
 
 inline bool IsContainer(HWND window, DWORD session) {
     DWORD owner = 0;
@@ -44,6 +45,12 @@ inline bool EmbedPlayer(HWND window, HWND container, DWORD session, int x, int y
 inline bool PlayerWindowMessage(HWND window, HWND container, UINT message, WPARAM wp, LPARAM lp, LRESULT& result) {
     if (!container || GetParent(window) != container) return false;
     result = 0;
+    if (message == kSessionActivation) {
+        // Child windows do not receive the top-level parent's activation transition.
+        // Deliver it on the game thread so native audio/input activation stays coherent.
+        SendMessageW(window, WM_ACTIVATE, wp ? WA_ACTIVE : WA_INACTIVE, 0);
+        return true;
+    }
     if (message == kFocusPlayer) {
         if (ContainerFocused(container)) SetFocus(window);
         return true;

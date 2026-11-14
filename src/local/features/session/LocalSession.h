@@ -37,6 +37,7 @@ private:
     bool closing = false, stopping = false;
     bool CreateContainer();
     void FocusKeyboard();
+    void NotifyActivation(bool active);
     void ShowControls();
     static LRESULT CALLBACK ContainerProc(HWND window, UINT message, WPARAM wp, LPARAM lp);
     bool Launch(int player);
