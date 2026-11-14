@@ -68,12 +68,51 @@ bool Session::CreateContainer() {
     return true;
 }
 void Session::FocusKeyboard() {
-    if (ContainerFocused(container))
-        if (HWND player = KeyboardWindow()) PostMessageW(player, kFocusPlayer, 0, 0);
+    focusPending = true;
+    focusSent = false;
+    focusRetryAt = focusDeadline = 0;
+    ServiceFocus();
+}
+void Session::ServiceFocus() {
+    if (!ContainerFocused(container)) {
+        foregroundActive = focusPending = focusSent = false;
+        return;  // never take focus back from another application or the controls window
+    }
+    if (!foregroundActive) {
+        focusPending = true;
+        focusSent = false;
+        focusRetryAt = focusDeadline = 0;
+    }
+    foregroundActive = true;
+    if (!focusPending) return;
+    HWND player = KeyboardWindow();
+    if (!player) return;
+    if (focusSent && PlayerFocused(player, container)) { focusPending = false; return; }
+    const auto now = GetTickCount64();
+    if (!focusDeadline) focusDeadline = now + 10000;
+    if (now > focusDeadline) { focusPending = false; return; }
+    if (now >= focusRetryAt) {
+        // The child can miss the first request while Windows is restoring attached input
+        // queues. Retry until its thread really owns focus; each request also repairs GTA input.
+        focusSent = PostMessageW(player, kFocusPlayer, 0, 0) != FALSE;
+        focusRetryAt = now + 100;
+    }
 }
 void Session::NotifyActivation(bool active) {
     for (DWORD pid : pids)
         if (HWND player = Window(pid, container)) PostMessageW(player, kSessionActivation, active, 0);
+}
+void Session::ServicePresentation() {
+    HWND host = Window(pids[0], container);
+    const bool active = host && GetPropW(host, kCinematicProperty);
+    if (active && GetWindow(container, GW_CHILD) != host)
+        SetWindowPos(host, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+    if (active != cinematic) {
+        cinematic = active;
+        // The same keyboard seat keeps its controls even underneath the host's view.
+        // Also recover capture after a cutscene resized that seat's window.
+        FocusKeyboard();
+    }
 }
 void Session::Resume() {
     if (!Active() || !container) return;
@@ -102,6 +141,13 @@ LRESULT CALLBACK Session::ContainerProc(HWND window, UINT message, WPARAM wp, LP
         if (LOWORD(wp) != WA_INACTIVE) PostMessageW(window, kFocusKeyboard, 0, 0);
         return 0;
     case WM_SETFOCUS: case kFocusKeyboard: self->FocusKeyboard(); return 0;
+    case WM_SIZE:
+        if (wp == SIZE_MINIMIZED) self->minimized = true;
+        else if (self->minimized) {
+            self->minimized = false;
+            PostMessageW(window, kFocusKeyboard, 0, 0);
+        }
+        break;
     case kSessionControls: self->ShowControls(); return 0;
     case WM_KEYDOWN: case WM_SYSKEYDOWN:
         if (wp == VK_F10) { if (!(lp & (1L << 30))) self->ShowControls(); return 0; }
@@ -260,6 +306,8 @@ void Session::Tick() {
     if (!Alive(processes[0]) || ((phase == Phase::Partner || phase == Phase::Running) && !Alive(processes[1]))) {
         Fail(L"A game closed. The local session has ended; see the player logs if it was unexpected."); return;
     }
+    ServicePresentation();
+    ServiceFocus();
     if (phase == Phase::Running) return;
     if (GetTickCount64() > deadline) { Fail(L"Startup timed out. Check player1/local.log and player2/local.log in the local data folder."); return; }
     if (phase == Phase::Host && WaitForSingleObject(ready[0], 0) == WAIT_OBJECT_0) {
@@ -304,6 +352,9 @@ void Session::Stop() {
     pids = {};
     phase = Phase::Idle;
     focusRequested = false;
+    focusPending = focusSent = foregroundActive = minimized = false;
+    cinematic = false;
+    focusRetryAt = focusDeadline = 0;
     if (container) { DestroyWindow(container); container = nullptr; }
     if (controls) ShowWindow(controls, SW_RESTORE);
     stopping = false;

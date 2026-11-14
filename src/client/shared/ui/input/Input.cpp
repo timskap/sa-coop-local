@@ -34,6 +34,7 @@ static void __cdecl HookFocusMenu() {
 }
 
 static LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == local::kFocusPlayer || msg == WM_SETFOCUS) localinput::RequestFocusRecovery();
     LRESULT result = 0;
     if (local::PlayerWindowMessage(hwnd, static_cast<HWND>(localinput::ContainerWindow()), msg, wp, lp, result)) return result;
     // The focused window can use F9, chat and invitation shortcuts even in a controller seat.

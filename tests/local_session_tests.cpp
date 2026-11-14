@@ -18,6 +18,12 @@ using namespace coop;
 void Check(bool yes, const char* message) { if (!yes) throw std::runtime_error(message); }
 void Write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
 DWORD Pid(const fs::path& path) { DWORD pid = 0; std::ifstream(path) >> pid; return pid; }
+constexpr UINT kLoseMouse = WM_APP + 0x500;
+constexpr UINT kCinematic = WM_APP + 0x501;
+IDirectInputDevice8W* fakeMouse = nullptr;
+local::Viewport fakeSplit{};
+uintptr_t Property(HWND window, const wchar_t* name) { return reinterpret_cast<uintptr_t>(GetPropW(window, name)); }
+void Property(HWND window, const wchar_t* name, uintptr_t value) { SetPropW(window, name, reinterpret_cast<HANDLE>(value)); }
 void Pump() {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -29,10 +35,37 @@ template<class F> void Until(F done, const char* message) {
     while (!done()) { Check(GetTickCount64() < deadline, message); Pump(); Sleep(20); }
 }
 LRESULT CALLBACK FakeWindow(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == kCinematic) {
+        const HWND parent = GetParent(h);
+        DWORD session = 0; GetWindowThreadProcessId(parent, &session);
+        Check(local::PresentPlayer(h, parent, session, fakeSplit, w != 0), "Cinematic layout failed");
+        return 0;
+    }
+    if (m == WM_SIZE) Property(h, L"TEST_RESIZES", Property(h, L"TEST_RESIZES") + 1);
+    if (m == kLoseMouse) {
+        Check(fakeMouse && SUCCEEDED(fakeMouse->Unacquire()), "Could not simulate lost mouse acquisition");
+        DIMOUSESTATE2 state{};
+        Check(FAILED(fakeMouse->GetDeviceState(sizeof(state), &state)), "Unacquired mouse still returns input");
+        return 0;
+    }
+    if (m == local::kFocusPlayer) {
+        Property(h, L"TEST_FOCUS_REQUESTS", Property(h, L"TEST_FOCUS_REQUESTS") + 1);
+        const auto drop = Property(h, L"TEST_DROP_FOCUS");
+        if (drop) { Property(h, L"TEST_DROP_FOCUS", drop - 1); return 0; }
+    }
     LRESULT result = 0;
-    if (local::PlayerWindowMessage(h, GetParent(h), m, w, l, result)) return result;
+    if (local::PlayerWindowMessage(h, GetParent(h), m, w, l, result)) {
+        if (m == local::kFocusPlayer && local::PlayerFocused(h, GetParent(h))) {
+            Check(SUCCEEDED(local::RecoverMouse(fakeMouse)), "Mouse did not recover after window restoration");
+            Property(h, L"TEST_MOUSE_RECOVERED", Property(h, L"TEST_MOUSE_RECOVERED") + 1);
+        }
+        return result;
+    }
     if (m == WM_ACTIVATE) { SetPropW(h, L"TEST_ACTIVATED", reinterpret_cast<HANDLE>(static_cast<uintptr_t>(w))); return 0; }
-    if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
+    if (m == WM_DESTROY) {
+        if (fakeMouse) { fakeMouse->Release(); fakeMouse = nullptr; }
+        PostQuitMessage(0); return 0;
+    }
     return DefWindowProcW(h, m, w, l);
 }
 int FakeGame(const std::wstring& root) {
@@ -74,6 +107,8 @@ int FakeGame(const std::wstring& root) {
     Check(window != nullptr, "Fake game window failed");
     SetPropW(window, L"SA_COOP_LOCAL_SESSION", reinterpret_cast<HANDLE>(static_cast<uintptr_t>(ini.GetInt("local", "session", 0))));
     HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(static_cast<unsigned>(ini.GetInt("local", "container", 0))));
+    fakeSplit = {ini.GetInt("game", "window_x", 0), ini.GetInt("game", "window_y", 0),
+                 ini.GetInt("game", "width", 0), ini.GetInt("game", "height", 0)};
     Check(local::EmbedPlayer(window, parent, ini.GetInt("local", "session", 0),
                             ini.GetInt("game", "window_x", 0), ini.GetInt("game", "window_y", 0),
                             ini.GetInt("game", "width", 0), ini.GetInt("game", "height", 0)), "Game embedding failed");
@@ -84,10 +119,13 @@ int FakeGame(const std::wstring& root) {
                                      reinterpret_cast<void**>(&input), nullptr)), "DirectInput factory failed");
     IDirectInputDevice8W* mouse = nullptr;
     Check(SUCCEEDED(input->CreateDevice(GUID_SysMouse, &mouse, nullptr)), "DirectInput mouse creation failed");
+    Check(SUCCEEDED(mouse->SetDataFormat(&c_dfDIMouse2)), "Mouse data format failed");
     HWND inputOwner = local::BackgroundInputWindow();
     Check(inputOwner && !GetParent(inputOwner) && !IsWindowVisible(inputOwner), "Input owner must be hidden and top-level");
     Check(SUCCEEDED(mouse->SetCooperativeLevel(inputOwner, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE)), "Embedded mouse cooperative level failed");
-    mouse->Release(); input->Release();
+    fakeMouse = mouse;
+    Check(SUCCEEDED(local::RecoverMouse(fakeMouse)), "Initial mouse acquisition failed");
+    input->Release();
     Write(fs::path(root) / (host ? "p1.pid" : "p2.pid"), std::to_string(GetCurrentProcessId()));
     const auto eventName = Utf8ToWide(ini.Get("local", "ready_event", ""));
     bool signaled = false;
@@ -134,6 +172,10 @@ int wmain(int argc, wchar_t** argv) {
         fs::rename(fs::path(root) / "gta_sa.saved", fs::path(root) / "gta_sa.exe");
         const bool crash = argc > 1 && std::wstring(argv[1]) == L"crash";
         for (int attempt = 0; attempt < (crash ? 1 : 2); ++attempt) {
+            if (attempt == 1) {
+                setup.Assign(local::kKeyboard, 0); setup.Assign(0, 1);
+                setup.ToggleReady(local::kKeyboard); setup.ToggleReady(0);
+            }
             setup.horizontal = attempt == 0;
             for (const char* file : {"p1.pid", "p2.pid", "server.pid", "allow-host"}) fs::remove(fs::path(root) / file);
             const auto requested = local::Split(GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), setup.horizontal);
@@ -149,7 +191,8 @@ int wmain(int argc, wchar_t** argv) {
             Check(!fs::exists(fs::path(root) / "p2.pid"), "P2 started before host readiness (or reused stale event)");
             Ini one, two;
             Check(one.Load(session.Directory() + L"player1\\local.ini") && two.Load(session.Directory() + L"player2\\local.ini"), "Missing profiles");
-            Check(one.Get("local", "input", "") == "gamepad" && two.Get("local", "input", "") == "keyboard", "Seat mapping changed");
+            Check(one.Get("local", "input", "") == (attempt ? "keyboard" : "gamepad") &&
+                  two.Get("local", "input", "") == (attempt ? "gamepad" : "keyboard"), "Seat mapping changed");
             Check(one.Get("game", "user_dir", "") != two.Get("game", "user_dir", ""), "Shared save directory");
             Check(one.GetInt("connect", "port", 0) == two.GetInt("connect", "port", -1), "Mismatched server ports");
             Write(fs::path(root) / "allow-host", "ready");
@@ -177,7 +220,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             Check(children == 2, "Both players must be inside one window");
             session.Resume();
-            Until([&] { return local::PlayerFocused(session.KeyboardWindow(), container); }, "Keyboard focus did not enter its child window");
+            Until([&] { session.Tick(); return local::PlayerFocused(session.KeyboardWindow(), container); }, "Keyboard focus did not enter its child window");
             Until([&] {
                 for (HWND child = GetWindow(container, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
                     if (!GetPropW(child, L"TEST_ACTIVATED")) return false;
@@ -188,7 +231,64 @@ int wmain(int argc, wchar_t** argv) {
             Until([&] { return IsWindowVisible(controls) && IsIconic(container); }, "F10 did not open session controls");
             Check(!local::ContainerFocused(container), "Minimized game still accepts controller input");
             session.Resume();
-            Until([&] { return local::PlayerFocused(session.KeyboardWindow(), container); }, "Keyboard focus did not return after restoring");
+            Until([&] { session.Tick(); return local::PlayerFocused(session.KeyboardWindow(), container); }, "Keyboard focus did not return after restoring");
+            HWND keyboard = session.KeyboardWindow();
+            HWND host = nullptr, partner = nullptr;
+            for (HWND child = GetWindow(container, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+                DWORD pid = 0; GetWindowThreadProcessId(child, &pid);
+                (pid == Pid(fs::path(root) / "p1.pid") ? host : partner) = child;
+            }
+            Check(host && partner, "Missing presentation windows");
+            // Only the known host may request cinematic presentation.
+            Property(partner, local::kCinematicProperty, 1);
+            session.Tick();
+            RECT hostBounds{}; GetClientRect(host, &hostBounds);
+            Check(hostBounds.right == views[0].width && hostBounds.bottom == views[0].height, "Partner took over presentation");
+            RemovePropW(partner, local::kCinematicProperty);
+            for (int scene = 0; scene < 3; ++scene) {
+                const auto resized = Property(host, L"TEST_RESIZES");
+                SendMessageW(host, kCinematic, TRUE, 0);
+                Until([&] { session.Tick(); return GetWindow(container, GW_CHILD) == host && local::PlayerFocused(keyboard, container); },
+                      "Cinematic lost keyboard focus or host view");
+                GetClientRect(host, &hostBounds);
+                Check(hostBounds.right == bounds.right && hostBounds.bottom == bounds.bottom &&
+                      Property(host, L"TEST_RESIZES") > resized, "Host must resize its render viewport, not stretch a half-screen image");
+                Check(IsWindowVisible(partner) && !IsIconic(partner), "Cinematic stopped the partner window");
+                // Activation/focus of the keyboard child must not expose it over the host.
+                SetWindowPos(partner, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+                Until([&] { return GetWindow(container, GW_CHILD) == partner; }, "Could not simulate partner activation over host");
+                Until([&] { session.Tick(); return GetWindow(container, GW_CHILD) == host; }, "Partner obscured cinematic");
+                SendMessageW(host, kCinematic, FALSE, 0); // normal end, skip and abort all clear the same state
+                Until([&] { session.Tick(); return local::PlayerFocused(keyboard, container); }, "Split restoration lost keyboard focus");
+                GetClientRect(host, &hostBounds);
+                Check(!GetPropW(host, local::kCinematicProperty) && hostBounds.right == views[0].width &&
+                      hostBounds.bottom == views[0].height, "Cutscene did not restore the selected split");
+            }
+            for (int cycle = 0; cycle < 6; ++cycle) {
+                SendMessageW(keyboard, kLoseMouse, 0, 0);
+                ShowWindow(controls, SW_RESTORE);
+                SetForegroundWindow(controls);
+                if (cycle % 2 == 0) ShowWindow(container, SW_MINIMIZE);
+                Until([&] { session.Tick(); return GetForegroundWindow() == controls; }, "Could not switch away from game");
+                // Neither a pending retry nor an activation message may steal another app's focus.
+                for (int i = 0; i < 15; ++i) { session.Tick(); Pump(); Sleep(10); }
+                Check(GetForegroundWindow() == controls && !local::PlayerFocused(keyboard, container), "Session stole background focus");
+                const auto recovered = Property(keyboard, L"TEST_MOUSE_RECOVERED");
+                Property(keyboard, L"TEST_DROP_FOCUS", 2);
+                const auto requests = Property(keyboard, L"TEST_FOCUS_REQUESTS");
+                // Simulate taskbar restore/Alt+Tab, without using Session::Resume/F10.
+                ShowWindow(container, SW_RESTORE);
+                SetForegroundWindow(container);
+                SetFocus(container);
+                Until([&] {
+                    session.Tick();
+                    return local::PlayerFocused(keyboard, container) && Property(keyboard, L"TEST_MOUSE_RECOVERED") > recovered;
+                }, "Repeated restore did not recover keyboard AND mouse");
+                Check(Property(keyboard, L"TEST_FOCUS_REQUESTS") >= requests + 3, "Missed focus messages were not retried");
+                Property(keyboard, L"TEST_ACTIVATED", 0);
+                PostMessageW(keyboard, local::kSessionActivation, FALSE, 0);  // stale deactivation arriving late
+                Until([&] { session.Tick(); return Property(keyboard, L"TEST_ACTIVATED") != 0; }, "Stale activation disabled a restored game");
+            }
             wchar_t inherited[128]{};
             GetEnvironmentVariableW(L"SACOOP_CONFIG", inherited, 128);
             Check(std::wstring(inherited) == L"parent-config-must-not-be-used", "Parent environment was mutated");
@@ -211,7 +311,7 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
         DestroyWindow(controls);
-        std::cout << "Session: fullscreen child layouts, focus/controls, DirectInput ownership, startup ordering and process cleanup passed\n";
+        std::cout << "Session: cinematic resizing/restoration, repeated taskbar/Alt+Tab restores, dropped focus messages, mouse reacquire, both keyboard seats and cleanup passed\n";
         WSACleanup();
     } catch (const std::exception& e) { std::cerr << e.what() << " (Windows " << GetLastError() << ")\n"; return 1; }
 }

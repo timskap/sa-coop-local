@@ -4,6 +4,9 @@
 
 namespace coop {
 
+// The local host is showing a cutscene or a scripted mission camera scene.
+bool LocalHostCinematic();
+
 // a mission marker waits for everybody: "Ждём напарника" for the host, "<host> ждёт вас..." for the partner, the
 // partner's call from one for the host (its keys in hint); empty otherwise
 std::string MissionWaitText(std::string& hint);
