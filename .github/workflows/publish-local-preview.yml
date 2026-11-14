@@ -4,7 +4,7 @@ name: Publish local co-op preview
 
 on:
   push:
-    branches: [fix/local-coop-review]
+    branches: [fix/bike-world-load]
     paths: [.github/workflows/publish-local-preview.yml]
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-local-preview-2
+  group: publish-local-preview-3
   cancel-in-progress: false
 
 jobs:
@@ -22,8 +22,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      SOURCE_SHA: def3e1abca08334f1b479961fa63835d83a84d68
-      RELEASE_TAG: v0.3.3-local.2
+      SOURCE_SHA: e96d8235fa6490771eb00efa46cd5a3ebf15cabe
+      RELEASE_TAG: v0.3.3-local.3
     steps:
       - uses: actions/checkout@v4
 
@@ -31,10 +31,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          result=$(gh api "repos/$GH_REPO/actions/runs/43601577711" --jq '.head_sha + " " + .conclusion')
+          result=$(gh api "repos/$GH_REPO/actions/runs/43603016867" --jq '.head_sha + " " + .conclusion')
           test "$result" = "$SOURCE_SHA success"
-          gh api "repos/$GH_REPO/actions/artifacts/14117110223/zip" > "$RUNNER_TEMP/local-actions-artifact.zip"
-          printf '%s  %s\n' '49736dbe8fc02d3b79e88b403c8295a5fd1f3ea735bd0dbd9308e32d680754b7' "$RUNNER_TEMP/local-actions-artifact.zip" | sha256sum --check
+          gh api "repos/$GH_REPO/actions/artifacts/14116853467/zip" > "$RUNNER_TEMP/local-actions-artifact.zip"
+          printf '%s  %s\n' '6786875b2b70159ca2ba43bfb9677ae8f9b0164528d3b6c96816fefe041c9dc1' "$RUNNER_TEMP/local-actions-artifact.zip" | sha256sum --check
 
       - name: Verify the install archive and generate its checksum
         shell: python
@@ -66,5 +66,5 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" release/SA-COOP.zip release/SHA256SUMS.txt \
             --target "$SOURCE_SHA" --prerelease --latest=false \
-            --title 'SA:COOP Local Split-Screen - Preview 2' \
+            --title 'SA:COOP Local Split-Screen - Preview 3' \
             --notes-file .github/local-release-notes.md
