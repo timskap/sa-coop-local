@@ -146,11 +146,11 @@ void Refresh() {
         Label(kReady1 + i, setup.seats[i].ready ? L"READY - click to cancel" : L"READY UP");
         EnableWindow(ControlFor(kReady1 + i), !active && setup.Available(setup.seats[i].device));
     }
-    Label(kLayout, setup.horizontal ? L"LAYOUT: TOP / BOTTOM" : L"LAYOUT: LEFT / RIGHT");
+    Label(kLayout, active ? L"RETURN TO GAME (F10)" : setup.horizontal ? L"LAYOUT: TOP / BOTTOM" : L"LAYOUT: LEFT / RIGHT");
     Label(kSave, selectedSave < 0 ? L"STORY: NEW GAME" : L"STORY: SAVE SLOT " + std::to_wstring(selectedSave));
     Label(kStart, active ? L"END SESSION" : L"PLAY LOCAL CO-OP");
     EnableWindow(ControlFor(kStart), active || setup.CanStart());
-    EnableWindow(ControlFor(kLayout), !active); EnableWindow(ControlFor(kSave), !active);
+    EnableWindow(ControlFor(kLayout), TRUE); EnableWindow(ControlFor(kSave), !active);
     for (int d = -1; d < 4; ++d) for (int side = 0; side < 2; ++side) {
         int id = kDevice + (d + 1) * 2 + side;
         EnableWindow(ControlFor(id), !active && setup.Available(d));
@@ -176,6 +176,7 @@ void StartOrStop() {
     Refresh();
 }
 void Action(int id) {
+    if (id == kLayout && session->Active()) { session->Resume(); return; }
     if (id == kStart) { StartOrStop(); return; }
     if (id == kData) {
         EnsureDirectory(session->Directory());
@@ -208,11 +209,9 @@ void Poll() {
     }
     session->Tick();
     if (session->TakeFocusRequest()) {
-        HWND game = session->KeyboardWindow();
         // Never steal focus if the user has switched to another application during startup.
         if (focused || GetPropW(GetForegroundWindow(), L"SA_COOP_LOCAL_SESSION") == reinterpret_cast<HANDLE>(static_cast<uintptr_t>(GetCurrentProcessId()))) {
-            ShowWindow(window, SW_MINIMIZE);
-            if (game) SetForegroundWindow(game);
+            session->Resume();
         }
     }
     if (wasActive && !session->Active()) ShowWindow(window, SW_RESTORE);
@@ -223,6 +222,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
     switch (message) {
     case WM_CREATE:
         window = hwnd;
+        session->SetControlsWindow(hwnd);
         AddControl(kReady1, L"READY UP", 203, 330, 265, 30);
         AddControl(kReady2, L"READY UP", 717, 330, 265, 30);
         for (int d = -1; d < 4; ++d) {
@@ -236,6 +236,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
         Resize(); Refresh(); SetTimer(hwnd, 1, 100, nullptr); return 0;
     case WM_COMMAND: if (HIWORD(wp) == BN_CLICKED) Action(LOWORD(wp)); return 0;
     case WM_TIMER: Poll(); return 0;
+    case WM_KEYDOWN: case WM_SYSKEYDOWN:
+        if (wp == VK_F10 && session->Active()) { if (!(lp & (1L << 30))) session->Resume(); return 0; }
+        return DefWindowProcW(hwnd, message, wp, lp);
     case WM_SIZE: if (wp != SIZE_MINIMIZED) Resize(); return 0;
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: { PAINTSTRUCT paint{}; HDC dc = BeginPaint(hwnd, &paint); Paint(dc); EndPaint(hwnd, &paint); return 0; }

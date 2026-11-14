@@ -4,7 +4,7 @@ This fork adds **`coop-local.exe`**, a native Windows setup screen inspired by s
 Assign a keyboard/mouse or a connected XInput controller to Player 1 and Player 2, ready both players, then play
 with a top/bottom or left/right split on the primary monitor.
 
-The implementation launches **two GTA SA processes**, each rendering its own borderless viewport, connected through
+The implementation launches **two GTA SA processes**, embedded as two child viewports of **one borderless fullscreen window**, connected through
 SA:COOP on localhost. It does not implement two cameras in one game process. Budget CPU, GPU and memory for two games.
 No GTA files are included. Requires **Windows 10 or later**, your own **GTA San Andreas 1.0 US**, the ASI loader,
 and the client/server from this build. Both launcher and clients use system DPI awareness so viewport coordinates
@@ -22,8 +22,10 @@ remain in physical pixels when Windows display scaling is above 100%.
    The primary display must provide at least 640 x 360 for each viewport.
 6. Press the **Play local co-op** button (or controller Start after both players are ready).
    Player 1 starts the local server first; Player 2 starts only after the host's network handshake succeeds.
-7. Play normally. If Windows leaves keyboard focus on the other half, click the keyboard player's window once.
-   Alt+Tab to the launcher and select **End session** to close both games. Save first.
+7. The setup screen hides and both views fill one fullscreen window, with one taskbar/Alt+Tab entry.
+   **F10** opens session controls; **Return to game / F10** restores fullscreen and the assigned keyboard player.
+   **Alt+F4** asks to end both games. Save first. Alt+Tab switches away from the whole session.
+   If you change monitor resolution during play, end and restart the session to recreate both render targets.
 
 **New game retains upstream behavior:** Player 1 plays the opening prologue alone and Player 2 waits. Load a save
 after the prologue for an immediate two-player start.
@@ -51,7 +53,7 @@ DirectInput-only controllers are not implemented. Controller numbers refer to Wi
 | D-pad / Back / Start | GTA's normal pad actions, camera and pause | GTA's normal pad actions, camera and pause |
 
 Keyboard/mouse uses the game's existing bindings. The controller seat uses GTA's classic pad mode with the mapping
-above. Controllers continue to drive their own player while either session window is foreground. Alt-tabbing to an
+above. Controllers continue to drive their own player while the shared fullscreen window is foreground. Alt-tabbing to an
 unrelated application releases controller input; unplugging a pad produces neutral input until that XInput slot returns.
 In setup, unplugging also removes assignment and readiness, so reconnecting cannot launch a session accidentally.
 
@@ -80,14 +82,21 @@ this mod without additional input hooks such as GInput. Compatibility with other
 ### First world load after getting off the bike
 
 After the prologue, the host cannot create a world snapshot while riding. Getting off the bike allows the first snapshot,
-which Player 2 then loads. Preview 3 fixes two failures in this transition: the nested local profile path could overflow
-GTA's 104-byte load-name buffers, and a previous slot-read error could make GTA reject a valid save. Only short tokens
-enter GTA's legacy buffers now; the file-open hooks resolve the full paths. Native storage errors are reset before a
-new operation, and snapshot checksums are checked before upload and load. The main.scm compatibility check remains active.
+which Player 2 then loads. Preview 3's path/checksum changes did **not** resolve the reported installation: GTA still
+returned native storage error **7 (SLOT_INVALID)**. This is a generic wrapper result, not evidence of a version mismatch.
 
-A file-read/checksum failure now reports that cause instead of guessing that the versions differ. If loading still fails,
-open **Saves / Logs** and collect `player1/local.log` and `player2/local.log` immediately after the failure. The log includes
-the save path length, previous storage error and native validation result. The normal saved games remain in their profiles.
+Preview 4 removes the replacement `GenerateGameFilename` hook. The original game builds filenames using a temporary short
+prefix during validation, preserving its native calling convention and extension handling. The normal prefix is then
+restored byte-for-byte. File-open redirection resolves the short alias to the full per-player path; no long path is copied
+into the two 104-byte load buffers. Valid snapshots are aligned to a four-byte boundary with zero padding before the
+checksum, matching the native final-buffer read requirement. An unaligned input save is loaded through a separate copy;
+the original save is not rewritten. Corrupt checksums are never repaired or ignored, and main.scm compatibility is still checked.
+
+The original validation error is captured **before** GTA replaces it with 7. The screen reports the wrapper code, original
+error, and successful/attempted opens. `local.log` also records the requested/resolved filename, file size, read position and
+buffer state. If the failure remains, open **Saves / Logs** (F10 during play) and collect `player1/local.log` and
+`player2/local.log` immediately after the failure. Keep `player2/world/partner_world.b` for diagnosis as well.
+The new path is not yet confirmed against the user's actual game or failed snapshot.
 
 ## Implementation and verification
 
@@ -95,6 +104,8 @@ the save path length, previous storage error and native validation result. The n
 assignment and viewport logic is in `common/lib/local-coop/Setup.h`. The client applies input isolation before
 `CPad::Update` reconciles temporary keyboard, joystick and mouse states, preserving GTA's old/new button history and
 steering/horn bookkeeping. Existing ordinary online input handling is unchanged unless `[local] enabled = 1`.
+Embedded input uses a hidden top-level window in each game process for DirectInput background/nonexclusive ownership.
+Keyboard/mouse and controller state are gated by the foreground session and assigned seat, including when minimized.
 Structure offsets were checked against [plugin-sdk's SA CPad](https://github.com/DK22Pac/plugin-sdk/blob/master/plugin_sa/game_sa/CPad.h)
 and the update order against [gta-reversed's Pad.cpp](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Pad.cpp).
 
@@ -112,10 +123,11 @@ python tools/test_local_session.py   # Windows only; actual Session code with du
 `test_local_coop.py` checks all supported device pairs, device movement without duplicate ownership, readiness,
 disconnect/reconnect, odd-resolution splits, every signed 16-bit axis value, and the actual controller mapping including
 pickup, vehicle actions and neutral input. The Windows UI smoke test checks real native controls and launch gating.
-Save-file tests exercise paths longer than GTA's legacy buffers, snapshot transfers, corrupt/truncated saves and recovery
-from a previous storage error. They test the shared path/checksum logic, without executing GTA's native save routines.
+Save-file tests exercise paths longer than GTA's legacy buffers, scoped native prefixes, alignment without payload changes,
+snapshot transfers, corrupt/truncated saves and recovery from a previous storage error. They test the shared path/checksum logic, without executing GTA's native save routines.
 Session tests use dummy game/server processes to check private environments, failed starts, host-before-partner readiness,
-restart, focus handoff, one player exiting, normal shutdown and abrupt launcher termination. These tests do not exercise
+both fullscreen layouts without gaps/overlaps, child HWND ownership, focus restoration, F10 controls, hidden DirectInput
+ownership, restart, one player exiting, normal shutdown and abrupt launcher termination. These tests do not exercise
 the GTA engine. Build outputs are 32-bit Windows binaries.
 Linux cross-compilation can use the matching official llvm-mingw Linux distribution at `toolchain/llvm-mingw`.
 

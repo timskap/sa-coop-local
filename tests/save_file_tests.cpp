@@ -23,10 +23,24 @@ int main(int argc, char** argv) {
     assert(argc == 2);  // an isolated temporary directory, provided by the test runner
     const auto original = SaveBytes();
     assert(Valid(original));
+    // Runtime snapshots may end at any byte offset; GTA reads the final block in DWORDs.
+    for (int padding = 0; padding < 4; ++padding) {
+        auto bytes = original;
+        bytes.insert(bytes.end() - 4, padding, uint8_t{0});
+        const auto before = bytes;
+        assert(Valid(bytes) && Align(bytes));
+        assert(bytes.size() % 4 == 0 && bytes.size() >= before.size() && Valid(bytes));
+        assert(std::equal(before.begin(), before.end() - 4, bytes.begin()));
+        assert(std::equal(before.end() - 4, before.end(), bytes.end() - 4));
+        const auto aligned = bytes;
+        assert(Align(bytes) && bytes == aligned);
+    }
     assert(!Valid({}) && !Valid({'B', 'L', 'O', 'C', 'K'}));
     auto corrupted = original;
     corrupted[1000] ^= 1;
     assert(!Valid(corrupted));
+    const auto badBefore = corrupted;
+    assert(!Align(corrupted) && corrupted == badBefore);
     for (int removed = 1; removed <= 8; ++removed) {
         auto truncated = original;
         truncated.resize(truncated.size() - removed);
@@ -56,6 +70,25 @@ int main(int argc, char** argv) {
     const std::vector<uint8_t> received((std::istreambuf_iterator<char>(in)), {});
     assert(received == original && Valid(received));
     assert(std::string(Resolve(buffers.withPath, load, snapshot)) == load);
+
+    // No ABI-dependent filename detour: native naming gets a temporary short prefix,
+    // with or without the extension at this stage. Restore every byte even on failure.
+    char prefix[260]{};
+    std::strcpy(prefix, "C:\\Users\\original\\GTASAsf");
+    std::array<char, 260> backup{};
+    std::memcpy(backup.data(), prefix, sizeof(prefix));
+    auto validateSlot = [&] {
+        ScopedLoadPrefix scoped(prefix);
+        const auto base = std::string(prefix) + "8";
+        assert(base == kLoadBase);
+        assert(std::string(Resolve(base.c_str(), load, snapshot)) == load);
+        assert(std::string(Resolve((base + ".b").c_str(), load, snapshot)) == load);
+        return false;
+    };
+    assert(!validateSlot());
+    assert(!std::memcmp(prefix, backup.data(), sizeof(prefix)));
+    const char otherSlot[] = "__sacoop_load__7.b";
+    assert(Resolve(otherSlot, load, snapshot) == otherSlot);
 
     // CGenericGameStorage::CheckDataNotCorrupt also checks the sticky C_PcSave error.
     // Model a failed prior slot, a corrupt incoming save, then a valid retry.

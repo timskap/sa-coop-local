@@ -5,6 +5,7 @@
 #include <vector>
 #include "common/lib/ini/Ini.h"
 #include "common/lib/util/Util.h"
+#include "common/lib/local-coop/WindowHost.h"
 
 namespace coop::local {
 namespace {
@@ -20,9 +21,9 @@ BOOL CALLBACK FindWindowForProcess(HWND hwnd, LPARAM param) {
         GetPropW(hwnd, L"SA_COOP_LOCAL_SESSION")) { found.hwnd = hwnd; return FALSE; }
     return TRUE;
 }
-HWND Window(DWORD pid) {
+HWND Window(DWORD pid, HWND container) {
     WindowSearch found{pid};
-    EnumWindows(FindWindowForProcess, reinterpret_cast<LPARAM>(&found));
+    if (container) EnumChildWindows(container, FindWindowForProcess, reinterpret_cast<LPARAM>(&found));
     return found.hwnd;
 }
 bool Alive(HANDLE process) { return process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT; }
@@ -51,6 +52,80 @@ Session::Session(std::wstring dir) : gameDir(std::move(dir)) {
     }
 }
 Session::~Session() { Stop(); }
+bool Session::CreateContainer() {
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = ContainerProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = kContainerClass;
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+    container = CreateWindowExW(WS_EX_APPWINDOW, kContainerClass, L"SA:COOP - Local split-screen",
+        WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0,
+        GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, this);
+    if (!container) return false;
+    SetPropW(container, kSessionProperty, reinterpret_cast<HANDLE>(static_cast<uintptr_t>(GetCurrentProcessId())));
+    return true;
+}
+void Session::FocusKeyboard() {
+    if (ContainerFocused(container))
+        if (HWND player = KeyboardWindow()) PostMessageW(player, kFocusPlayer, 0, 0);
+}
+void Session::NotifyActivation(bool active) {
+    for (DWORD pid : pids)
+        if (HWND player = Window(pid, container)) PostMessageW(player, kSessionActivation, active, 0);
+}
+void Session::Resume() {
+    if (!Active() || !container) return;
+    if (controls) ShowWindow(controls, SW_HIDE);
+    ShowWindow(container, SW_RESTORE);
+    SetForegroundWindow(container);
+    NotifyActivation(ContainerFocused(container));
+    FocusKeyboard();
+}
+void Session::ShowControls() {
+    if (!controls) return;
+    ShowWindow(container, SW_MINIMIZE);
+    ShowWindow(controls, SW_RESTORE);
+    SetForegroundWindow(controls);
+}
+LRESULT CALLBACK Session::ContainerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
+    auto* self = reinterpret_cast<Session*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        self = static_cast<Session*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    }
+    if (!self) return DefWindowProcW(window, message, wp, lp);
+    switch (message) {
+    case WM_ACTIVATE:
+        self->NotifyActivation(LOWORD(wp) != WA_INACTIVE && !HIWORD(wp));
+        if (LOWORD(wp) != WA_INACTIVE) PostMessageW(window, kFocusKeyboard, 0, 0);
+        return 0;
+    case WM_SETFOCUS: case kFocusKeyboard: self->FocusKeyboard(); return 0;
+    case kSessionControls: self->ShowControls(); return 0;
+    case WM_KEYDOWN: case WM_SYSKEYDOWN:
+        if (wp == VK_F10) { if (!(lp & (1L << 30))) self->ShowControls(); return 0; }
+        break;
+    case WM_CLOSE:
+        if (!self->closing && !self->stopping) {
+            self->closing = true;
+            if (MessageBoxW(window, L"End both games? Save first; unsaved progress will be lost.",
+                            L"End local co-op", MB_YESNO | MB_ICONQUESTION) == IDYES) self->Stop();
+            self->closing = false;
+            self->FocusKeyboard();
+        }
+        return 0;
+    case WM_DISPLAYCHANGE:
+        // Keep the render targets at their startup resolution. Reopening a session reconfigures both games.
+        self->ShowControls();
+        return 0;
+    case WM_NCDESTROY:
+        RemovePropW(window, kSessionProperty);
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        break;
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
 bool Session::SaveExists(int slot) const {
     if (FileExists(SaveFile(dataDir + L"player1\\documents\\GTA San Andreas User Files\\", slot))) return true;
     wchar_t docs[MAX_PATH]{};
@@ -101,6 +176,7 @@ bool Session::WriteConfigs(const Setup& setup, int slot, unsigned port) {
         ini.Set("local", "input", setup.seats[i].device == kKeyboard ? "keyboard" : "gamepad");
         ini.SetInt("local", "controller", setup.seats[i].device);
         ini.SetInt("local", "session", GetCurrentProcessId());
+        ini.SetInt("local", "container", static_cast<int>(reinterpret_cast<uintptr_t>(container)));
         ini.Set("local", "data_dir", WideToUtf8(dir));
         eventNames[i] = L"Local\\SA_COOP_READY_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(i);
         ini.Set("local", "ready_event", WideToUtf8(eventNames[i]));
@@ -162,6 +238,7 @@ bool Session::Start(const Setup& setup, int slot) {
     if (slot > 0 && !SaveExists(slot)) { status = L"That save slot is empty. Choose another slot or New game."; return false; }
     const unsigned port = FreePort();
     if (!port) { status = L"Could not allocate a local UDP port."; return false; }
+    if (!CreateContainer()) { status = L"Could not create the fullscreen session window."; return false; }
     if (!WriteConfigs(setup, slot, port)) { Fail(status); return false; }
     job = CreateJobObjectW(nullptr, nullptr);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -173,6 +250,7 @@ bool Session::Start(const Setup& setup, int slot) {
     keyboardSeat = setup.seats[1].device == kKeyboard ? 1 : 0;
     if (!Launch(0)) { Fail(L"Could not start Player 1. Windows error " + std::to_wstring(GetLastError())); return false; }
     phase = Phase::Host;
+    ShowWindow(container, SW_SHOWNOACTIVATE);
     deadline = GetTickCount64() + 120000;
     status = L"Starting Player 1 and the local server...";
     return true;
@@ -190,20 +268,35 @@ void Session::Tick() {
         deadline = GetTickCount64() + 120000;
         status = L"Player 1 is online. Connecting Player 2...";
     } else if (phase == Phase::Partner && WaitForSingleObject(ready[1], 0) == WAIT_OBJECT_0 &&
-               Window(pids[0]) && Window(pids[1])) {
+               Window(pids[0], container) && Window(pids[1], container)) {
         phase = Phase::Running;
-        status = L"Local co-op is running. Alt+Tab back here to end the session.";
+        status = L"Local co-op is running. F10 opens session controls; Alt+F4 ends both games.";
         focusRequested = true;
     }
 }
 bool Session::TakeFocusRequest() { const bool value = focusRequested; focusRequested = false; return value; }
-HWND Session::KeyboardWindow() const { return Window(pids[keyboardSeat]); }
+HWND Session::KeyboardWindow() const { return Window(pids[keyboardSeat], container); }
 void Session::Fail(std::wstring message) { Stop(); status = message; }
 void Session::Stop() {
+    if (stopping) return;
+    stopping = true;
     if (Active()) status = L"Session ended. Choose devices to play again.";
-    for (int i = 0; i < 2; ++i) if (Alive(processes[i])) if (HWND window = Window(pids[i])) PostMessageW(window, WM_CLOSE, 0, 0);
+    phase = Phase::Idle;
+    for (int i = 0; i < 2; ++i) if (Alive(processes[i]))
+        if (HWND window = Window(pids[i], container)) PostMessageW(window, WM_CLOSE, 1, 0);
     for (auto& process : processes) if (process) {
-        if (WaitForSingleObject(process, 3000) == WAIT_TIMEOUT) TerminateProcess(process, 0);
+        const auto until = GetTickCount64() + 3000;
+        // Reparented windows share input queues. Pump messages while they shut down instead of
+        // blocking a child that is sending a synchronous window-destruction notification to us.
+        while (Alive(process) && GetTickCount64() < until) {
+            MsgWaitForMultipleObjects(1, &process, FALSE, 25, QS_ALLINPUT);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                if (message.message == WM_QUIT) { PostQuitMessage(static_cast<int>(message.wParam)); break; }
+                TranslateMessage(&message); DispatchMessageW(&message);
+            }
+        }
+        if (Alive(process)) TerminateProcess(process, 0);
         CloseHandle(process); process = nullptr;
     }
     for (auto& event : ready) if (event) { CloseHandle(event); event = nullptr; }
@@ -211,5 +304,8 @@ void Session::Stop() {
     pids = {};
     phase = Phase::Idle;
     focusRequested = false;
+    if (container) { DestroyWindow(container); container = nullptr; }
+    if (controls) ShowWindow(controls, SW_RESTORE);
+    stopping = false;
 }
 }  // namespace coop::local

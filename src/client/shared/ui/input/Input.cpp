@@ -10,6 +10,7 @@
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
 #include "shared/local-coop/LocalInput.h"
+#include "common/lib/local-coop/WindowHost.h"
 
 namespace coop::ui {
 
@@ -33,6 +34,8 @@ static void __cdecl HookFocusMenu() {
 }
 
 static LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    LRESULT result = 0;
+    if (local::PlayerWindowMessage(hwnd, static_cast<HWND>(localinput::ContainerWindow()), msg, wp, lp, result)) return result;
     // The focused window can use F9, chat and invitation shortcuts even in a controller seat.
     // Only SA:COOP's UI sees those keys; they must never reach GTA's gameplay keyboard state.
     if (In().OnMessage(msg, wp, lp)) return 0;

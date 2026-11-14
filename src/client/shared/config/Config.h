@@ -69,6 +69,7 @@ struct ClientConfig {
     bool localCoop = false;
     int localDevice = -2;             // -1 keyboard/mouse, 0..3 XInput; -2 invalid (no input)
     unsigned localSession = 0;        // launcher PID, used to recognize the other half's window
+    unsigned localContainer = 0;      // verified launcher-owned fullscreen parent HWND (32-bit game)
     std::string localReadyEvent;      // signalled once the host has joined its own loopback server
     std::wstring dataDir;             // mutable world/crash/server files; isolated per local player
 

@@ -11,6 +11,7 @@
 
 #include "common/lib/log/Log.h"
 #include "common/lib/util/Util.h"
+#include "common/lib/local-coop/WindowHost.h"
 #include "entities/mission/Mission.h"
 #include "entities/vehicle/Vehicles.h"
 #include "shared/api/net-session/Session.h"
@@ -33,7 +34,7 @@ using MenuFn = void(__fastcall*)(void*, void*);
 MenuFn g_origCentreMouse = nullptr;
 void __fastcall HookCentreMousePointer(void* self, void* edx) {
     // Running in background: never steal the OS cursor from other applications.
-    if (localinput::UsesGamepad() || !game::IsForeground() || ui::In().MouseCaptured()) return;
+    if (localinput::UsesGamepad() || !localinput::HasInputFocus() || ui::In().MouseCaptured()) return;
     g_origCentreMouse(self, edx);
 }
 
@@ -42,7 +43,7 @@ MouseSetPosFn g_origIdleMouseSetPos = nullptr;
 void __cdecl HookIdleMouseSetPos(void* pos) {
     // Idle() puts the OS cursor in the middle of the window every frame in game: not while our menu uses the
     // mouse, and not in the background (it would drag the cursor away from other applications).
-    if (localinput::UsesGamepad() || !game::IsForeground() || ui::In().MouseCaptured()) return;
+    if (localinput::UsesGamepad() || !localinput::HasInputFocus() || ui::In().MouseCaptured()) return;
     g_origIdleMouseSetPos(pos);
 }
 
@@ -50,6 +51,19 @@ using PadFn = void(__fastcall*)(void*, void*);
 PadFn g_origUpdateMouse = nullptr;
 bool g_buttonsWaitUp = false;  // a window let the mouse go: its buttons reach the game once they are let go
 void __fastcall HookUpdateMouse(void* self, void* edx) {
+    if (Cfg().localCoop && !localinput::HasInputFocus()) {
+        // Background DirectInput still accumulates mouse deltas. Drain them while the
+        // session is unfocused so returning to the game cannot cause a camera jump.
+        if (Cfg().localContainer) {
+            auto& foreground = game::Ref<uint8_t>(game::addr::ForegroundApp);
+            const uint8_t previous = foreground;
+            foreground = 1;
+            g_origUpdateMouse(self, edx);
+            foreground = previous;
+        }
+        memset((void*)0xB73418, 0, 0x28);
+        return;
+    }
     if (localinput::UsesGamepad() && !ui::In().MouseCaptured()) {
         memset((void*)0xB73418, 0, 0x28);  // new/old mouse states
         return;
@@ -165,11 +179,21 @@ RECT WindowArea() {
 }
 
 LONG WindowStyle() {
+    if (Cfg().localCoop && Cfg().localContainer) return WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     return Cfg().borderless ? WS_POPUP | WS_VISIBLE : WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
 }
 
 void AdjustWindow(HWND hwnd, int w, int h) {
     auto& cfg = Cfg();
+    if (cfg.localCoop && cfg.localContainer) {
+        if (!local::EmbedPlayer(hwnd, reinterpret_cast<HWND>(static_cast<uintptr_t>(cfg.localContainer)), cfg.localSession,
+                               cfg.windowX, cfg.windowY, w, h)) {
+            LOGE("Could not embed game in the fullscreen session (Windows error %lu)", GetLastError());
+            TerminateProcess(GetCurrentProcess(), 5);
+        }
+        if (!cfg.windowTitle.empty()) SetWindowTextW(hwnd, Utf8ToWide(cfg.windowTitle).c_str());
+        return;
+    }
     LONG style = WindowStyle();
     SetWindowLongW(hwnd, GWL_STYLE, style);
     SetWindowLongW(hwnd, GWL_EXSTYLE, 0);
@@ -864,7 +888,10 @@ void ApplyWindowPlacement() {
             TerminateProcess(GetCurrentProcess(), 3);
         }
     }
-    if (rc.right == g_winW && rc.bottom == g_winH && (style & WS_CAPTION) == (WindowStyle() & WS_CAPTION)) return;
+    const LONG checkedStyle = WS_CAPTION | WS_CHILD | WS_POPUP;
+    const bool parentCorrect = !Cfg().localContainer || GetParent(hwnd) == localinput::ContainerWindow();
+    if (parentCorrect && rc.right == g_winW && rc.bottom == g_winH &&
+        (style & checkedStyle) == (WindowStyle() & checkedStyle)) return;
     static int attempts = 0;
     if (++attempts > 5) return;  // something keeps resizing the window: stop fighting it
     LOGI("Window placement: client %ldx%ld style %08lX -> %dx%d", rc.right, rc.bottom, style, g_winW, g_winH);

@@ -100,6 +100,7 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
         const int controller = ini.GetInt("local", "controller", -2);
         localDevice = input == "keyboard" ? -1 : input == "gamepad" && controller >= 0 && controller < 4 ? controller : -2;
         localSession = static_cast<unsigned>(ini.GetInt("local", "session", 0));
+        localContainer = static_cast<unsigned>(ini.GetInt("local", "container", 0));
         localReadyEvent = ini.Get("local", "ready_event", "");
         std::wstring dir = Utf8ToWide(ini.Get("local", "data_dir", ""));
         if (!dir.empty()) {

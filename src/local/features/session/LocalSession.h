@@ -19,6 +19,9 @@ public:
     const std::wstring& Directory() const { return dataDir; }
     bool SaveExists(int slot) const;
     HWND KeyboardWindow() const;
+    HWND ContainerWindow() const { return container; }
+    void SetControlsWindow(HWND window) { controls = window; }
+    void Resume();
 private:
     enum class Phase { Idle, Host, Partner, Running };
     Phase phase = Phase::Idle;
@@ -30,6 +33,13 @@ private:
     int keyboardSeat = 0;
     ULONGLONG deadline = 0;
     bool focusRequested = false;
+    HWND container = nullptr, controls = nullptr;
+    bool closing = false, stopping = false;
+    bool CreateContainer();
+    void FocusKeyboard();
+    void NotifyActivation(bool active);
+    void ShowControls();
+    static LRESULT CALLBACK ContainerProc(HWND window, UINT message, WPARAM wp, LPARAM lp);
     bool Launch(int player);
     bool WriteConfigs(const Setup& setup, int slot, unsigned port);
     void Fail(std::wstring message);
