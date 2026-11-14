@@ -4,7 +4,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/local-split-screen]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -40,8 +40,14 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8  # it prints the Russian texts it finds
 
+      - name: Test local co-op setup and input ranges
+        run: python tools/test_local_coop.py
+
       - name: Build the archive
         run: python tools/build.py dist
+
+      - name: Smoke test the native local co-op launcher
+        run: python tools/test_local_launcher.py
 
       - uses: actions/upload-artifact@v4
         with:

@@ -19,6 +19,7 @@ ClientConfig& Cfg() {
 
 bool ClientConfig::Load(const std::wstring& coopDirectory) {
     coopDir = coopDirectory;
+    dataDir = coopDirectory;
     gameDir = ModuleDir(nullptr);
     iniPath = coopDir + L"coop.ini";
     // SACOOP_CONFIG=<file> (environment) selects another config: several game copies on one PC,
@@ -93,6 +94,25 @@ bool ClientConfig::Load(const std::wstring& coopDirectory) {
     serverData = ini.Get("debug", "server_data", serverData);
     while (!serverData.empty() && (serverData.back() == '\\' || serverData.back() == '/')) serverData.pop_back();
     if (serverData.empty()) serverData = "server-data";  // a trailing backslash would escape the quote around it
+    localCoop = ini.GetBool("local", "enabled", false);
+    if (localCoop) {
+        const std::string input = ToLower(ini.Get("local", "input", ""));
+        const int controller = ini.GetInt("local", "controller", -2);
+        localDevice = input == "keyboard" ? -1 : input == "gamepad" && controller >= 0 && controller < 4 ? controller : -2;
+        localSession = static_cast<unsigned>(ini.GetInt("local", "session", 0));
+        localReadyEvent = ini.Get("local", "ready_event", "");
+        std::wstring dir = Utf8ToWide(ini.Get("local", "data_dir", ""));
+        if (!dir.empty()) {
+            if (dir.size() < 2 || dir[1] != L':') dir = coopDir + dir;
+            if (dir.back() != L'\\') dir += L'\\';
+            dataDir = dir;
+        }
+        multiInstance = windowed = windowedStrict = borderless = runInBackground = true;
+        noPauseMenu = true;
+        voiceEnabled = firewallPrompt = false;
+        host = "127.0.0.1";
+        maxPlayers = 2;
+    }
     return true;
 }
 

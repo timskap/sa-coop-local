@@ -651,8 +651,8 @@ bool SavingSnapshot() { return g_snapshot; }
 bool SaveWorldSnapshot(std::vector<uint8_t>& out) {
     // the game never saves with the player in a vehicle: loading such a save leaves no player
     if (!IsPlayerReady() || IsOnMission() || game::FindPlayerPed(0)->InVehicle()) return false;
-    std::wstring tmp = Cfg().coopDir + L"world\\host_snapshot.b";
-    EnsureDirectory(Cfg().coopDir + L"world");
+    std::wstring tmp = Cfg().dataDir + L"world\\host_snapshot.b";
+    EnsureDirectory(Cfg().dataDir + L"world");
     std::string ansi = ToAnsiPath(tmp);
     if (ansi.size() >= 250) return false;
     // CGenericGameStorage::ms_SaveFileName — GenericSave writes to this path
@@ -689,7 +689,8 @@ void Init(void* hModule) {
     LOGI("%s %s (protocol %u) loaded, coop dir: %s, config: %s", COOP_NAME, COOP_VERSION_STR, kProtocolVersion,
          WideToUtf8(coopDir).c_str(), WideToUtf8(cfg.iniPath).c_str());
     if (!cfg.verboseLog) log::SetMinLevel(log::Level::Info);
-    InstallCrashHandler(coopDir);
+    EnsureDirectory(cfg.dataDir);
+    InstallCrashHandler(cfg.dataDir);
     // for everyone, not only with verbose_log: the reports of a game frozen on a black screen (#86, #87) came without the
     // place it stood, and the main thread's stack 15 s into a freeze goes to crash.log
     StartHangDetector(15);

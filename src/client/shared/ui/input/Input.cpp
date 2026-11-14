@@ -9,6 +9,7 @@
 #include "shared/game/Game.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
+#include "shared/local-coop/LocalInput.h"
 
 namespace coop::ui {
 
@@ -32,6 +33,9 @@ static void __cdecl HookFocusMenu() {
 }
 
 static LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // A controller seat never receives the keyboard assigned to its partner. Keep OS shortcuts.
+    if (localinput::UsesGamepad() && !In().KeyboardCaptured() &&
+        (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR)) return 0;
     if (In().OnMessage(msg, wp, lp)) return 0;
     return CallWindowProcW(g_origProc, hwnd, msg, wp, lp);
 }
@@ -39,6 +43,7 @@ static LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 void Input::Install(void* hwnd) {
     if (m_hwnd || !hwnd) return;
     m_hwnd = hwnd;
+    localinput::RegisterWindow(hwnd);
     g_origProc = (WNDPROC)SetWindowLongPtrW((HWND)hwnd, GWLP_WNDPROC, (LONG_PTR)&CoopWndProc);
     LOGI("Window procedure subclassed (hwnd %p)", hwnd);
     g_focusMenuHooked = mem::RedirectCallFn(0x748063, &HookFocusMenu, &g_origFocusMenu);

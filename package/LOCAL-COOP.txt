@@ -1,0 +1,22 @@
+SA:COOP LOCAL PLAY - EXPERIMENTAL
+
+Install this build of SA:COOP in GTA San Andreas 1.0 US first.
+Run coop-local.exe beside gta_sa.exe.
+
+Assign two different devices to Player 1 and Player 2:
+  Keyboard: left/right to choose side, Enter to ready.
+  XInput gamepad: D-pad/stick left/right, A to ready, B to release.
+  Mouse: click the assignment and Ready buttons.
+
+Choose top/bottom or left/right layout and a save slot. Press Play local co-op.
+One keyboard/mouse plus a controller, or two controllers, is supported.
+The new-game prologue is played by Player 1 alone; Player 2 waits for its end.
+
+This runs TWO game processes on one PC using a localhost-only server.
+Saves and logs are separate from your original game: open Saves / Logs in the launcher.
+Save before ending the session; closing either game ends both.
+
+This feature needs Windows gameplay testing before release. Do not combine it with
+other controller/window hooks for the initial test. Custom SA:COOP overlays still
+use keyboard/mouse; full controller navigation of those overlays is not implemented.
+See docs/LOCAL_COOP.md in the source repository for controls and technical details.

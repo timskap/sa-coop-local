@@ -20,6 +20,7 @@
 #include "shared/game/Script.h"
 #include "shared/lib/core/Core.h"
 #include "shared/lib/memory/Memory.h"
+#include "shared/local-coop/LocalInput.h"
 #include "shared/ui/input/Input.h"
 #include "shared/ui/renderer/Renderer.h"
 
@@ -32,7 +33,7 @@ using MenuFn = void(__fastcall*)(void*, void*);
 MenuFn g_origCentreMouse = nullptr;
 void __fastcall HookCentreMousePointer(void* self, void* edx) {
     // Running in background: never steal the OS cursor from other applications.
-    if (!game::IsForeground() || ui::In().MouseCaptured()) return;
+    if (localinput::UsesGamepad() || !game::IsForeground() || ui::In().MouseCaptured()) return;
     g_origCentreMouse(self, edx);
 }
 
@@ -41,7 +42,7 @@ MouseSetPosFn g_origIdleMouseSetPos = nullptr;
 void __cdecl HookIdleMouseSetPos(void* pos) {
     // Idle() puts the OS cursor in the middle of the window every frame in game: not while our menu uses the
     // mouse, and not in the background (it would drag the cursor away from other applications).
-    if (!game::IsForeground() || ui::In().MouseCaptured()) return;
+    if (localinput::UsesGamepad() || !game::IsForeground() || ui::In().MouseCaptured()) return;
     g_origIdleMouseSetPos(pos);
 }
 
@@ -49,6 +50,10 @@ using PadFn = void(__fastcall*)(void*, void*);
 PadFn g_origUpdateMouse = nullptr;
 bool g_buttonsWaitUp = false;  // a window let the mouse go: its buttons reach the game once they are let go
 void __fastcall HookUpdateMouse(void* self, void* edx) {
+    if (localinput::UsesGamepad() && !ui::In().MouseCaptured()) {
+        memset((void*)0xB73418, 0, 0x28);  // new/old mouse states
+        return;
+    }
     if (ui::In().MouseCaptured()) {
         g_buttonsWaitUp = true;
         if (ui::In().CursorFromGameMouse()) {  // exclusive fullscreen: our cursor moves by the game's reading of the mouse
@@ -105,6 +110,7 @@ void __cdecl HookUpdatePads() {
         game::GetPad(0)->NewState = game::CControllerState{};
         return;
     }
+    if (Cfg().localCoop) return;  // isolated before CPad::Update reconciles its inputs
     if (!Cfg().multiInstance || GetForegroundWindow() == (HWND)game::GameWindow()) return;
     for (int i = 0; i < 2; ++i) game::GetPad(i)->NewState = game::CControllerState{};
 }
@@ -888,6 +894,7 @@ void Apply() {
         IsolateInstance();
     }
 
+    localinput::Install();
     mem::RedirectCallFn(0x53BEE6, &HookUpdatePads, &g_origUpdatePads);  // CGame::Process -> CPad::UpdatePads
 
     // CdStreamInit opens the IMG archives past Windows' file cache (FILE_FLAG_NO_BUFFERING when the disk's sector is 2 KB
