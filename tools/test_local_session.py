@@ -27,7 +27,8 @@ with tempfile.TemporaryDirectory(prefix="sa-coop-session-") as directory:
                "src/common/lib/ini/Ini.cpp", "src/common/lib/util/Util.cpp"]
     subprocess.run([str(compiler), "-std=c++20", "-static", "-municode", "-DUNICODE", "-D_UNICODE", "-D_WIN32_WINNT=0x0A00",
                     "-I", str(ROOT / "src"), "-I", str(ROOT / "src/local"),
-                    *[str(ROOT / s) for s in sources], "-o", str(exe), "-lws2_32", "-lshell32", "-luser32"], check=True)
+                    *[str(ROOT / s) for s in sources], "-o", str(exe), "-lws2_32", "-lshell32", "-luser32", "-lgdi32",
+                    "-ldinput8", "-ldxguid"], check=True)
     shutil.copy2(exe, install / "gta_sa.exe")
     (install / "coop").mkdir()
     shutil.copy2(exe, install / "coop/coop-server.exe")

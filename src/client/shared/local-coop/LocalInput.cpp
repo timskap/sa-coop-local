@@ -2,9 +2,13 @@
 #include "shared/local-coop/Gamepad.h"
 
 #include <windows.h>
+#include <dinput.h>
 #include <algorithm>
+#include <map>
 #include "common/lib/local-coop/Setup.h"
 #include "common/lib/local-coop/XInput.h"
+#include "common/lib/local-coop/WindowHost.h"
+#include "common/lib/local-coop/InputWindow.h"
 #include "common/lib/log/Log.h"
 #include "shared/config/Config.h"
 #include "shared/game/Game.h"
@@ -15,8 +19,42 @@ namespace coop::localinput {
 namespace {
 using UpdateFn = void(__fastcall*)(game::CPad*, void*, int);
 UpdateFn original = nullptr;
+using InputCreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, void**, IUnknown*);
+using DeviceCreateFn = HRESULT(WINAPI*)(void*, REFGUID, void**, IUnknown*);
+using CooperativeFn = HRESULT(WINAPI*)(void*, HWND, DWORD);
+InputCreateFn originalInputCreate = nullptr;
+std::map<void**, DeviceCreateFn> originalDeviceCreates;
+std::map<void**, CooperativeFn> originalCooperatives;
+HRESULT WINAPI Cooperative(void* device, HWND window, DWORD flags) {
+    if (Cfg().localContainer) {
+        window = local::BackgroundInputWindow();
+        if (!window) return E_FAIL;
+        flags = DISCL_BACKGROUND | DISCL_NONEXCLUSIVE;
+    }
+    return originalCooperatives.at(*reinterpret_cast<void***>(device))(device, window, flags);
+}
+HRESULT WINAPI DeviceCreate(void* input, REFGUID guid, void** result, IUnknown* outer) {
+    HRESULT hr = originalDeviceCreates.at(*reinterpret_cast<void***>(input))(input, guid, result, outer);
+    if (SUCCEEDED(hr) && result && *result) {
+        void** vt = *reinterpret_cast<void***>(*result);
+        if (vt[13] != reinterpret_cast<void*>(&Cooperative)) {
+            originalCooperatives[vt] = reinterpret_cast<CooperativeFn>(mem::SwapVTable(vt, 13, reinterpret_cast<void*>(&Cooperative)));
+        }
+    }
+    return hr;
+}
+HRESULT WINAPI InputCreate(HINSTANCE module, DWORD version, REFIID iid, void** result, IUnknown* outer) {
+    HRESULT hr = originalInputCreate(module, version, iid, result, outer);
+    if (SUCCEEDED(hr) && result && *result) {
+        void** vt = *reinterpret_cast<void***>(*result);
+        if (vt[3] != reinterpret_cast<void*>(&DeviceCreate))
+            originalDeviceCreates[vt] = reinterpret_cast<DeviceCreateFn>(mem::SwapVTable(vt, 3, reinterpret_cast<void*>(&DeviceCreate)));
+    }
+    return hr;
+}
 constexpr wchar_t kSessionProperty[] = L"SA_COOP_LOCAL_SESSION";
 bool SessionFocused() {
+    if (HWND parent = static_cast<HWND>(ContainerWindow())) return local::ContainerFocused(parent);
     HWND foreground = GetForegroundWindow();
     if (foreground == static_cast<HWND>(game::GameWindow())) return true;
     return Cfg().localSession && reinterpret_cast<uintptr_t>(GetPropW(foreground, kSessionProperty)) == Cfg().localSession;
@@ -42,7 +80,7 @@ void __fastcall Update(game::CPad* pad, void* edx, int number) {
     } else if (Cfg().localDevice == -1) {
         joystick = {};  // keep vanilla keyboard bindings and mouse, discard every controller
         game::cam::UseMouse3rdPerson() = 1;
-        if (!game::IsForeground()) keyboard = mouse = {};
+        if (!HasInputFocus()) keyboard = mouse = {};
     } else {
         keyboard = mouse = {};
         joystick = Controller();
@@ -53,7 +91,16 @@ void __fastcall Update(game::CPad* pad, void* edx, int number) {
 }
 }  // namespace
 
-bool HasInputFocus() { return UsesGamepad() ? SessionFocused() : game::IsForeground(); }
+void* ContainerWindow() {
+    HWND window = reinterpret_cast<HWND>(static_cast<uintptr_t>(Cfg().localContainer));
+    return Cfg().localCoop && local::IsContainer(window, Cfg().localSession) ? window : nullptr;
+}
+bool HasInputFocus() {
+    if (UsesGamepad()) return SessionFocused();
+    if (HWND parent = static_cast<HWND>(ContainerWindow()))
+        return local::PlayerFocused(static_cast<HWND>(game::GameWindow()), parent);
+    return game::IsForeground();
+}
 
 bool UsesGamepad() { return Cfg().localCoop && Cfg().localDevice != -1; }
 void RegisterWindow(void* window) {
@@ -62,6 +109,15 @@ void RegisterWindow(void* window) {
 }
 void Install() {
     if (!Cfg().localCoop) return;
+    if (Cfg().localContainer) {
+        HMODULE input = LoadLibraryW(L"dinput8.dll");
+        auto* create = input ? reinterpret_cast<void*>(GetProcAddress(input, "DirectInput8Create")) : nullptr;
+        if (!create || !mem::Hook(reinterpret_cast<uintptr_t>(create), reinterpret_cast<void*>(&InputCreate),
+                                 reinterpret_cast<void**>(&originalInputCreate), "DirectInput8Create (embedded input)")) {
+            LOGE("Cannot install embedded window input support");
+            TerminateProcess(GetCurrentProcess(), 5);
+        }
+    }
     if (!mem::HookFn(0x541C40, &Update, &original, "CPad::Update (local co-op)")) {
         LOGE("Local co-op input hook failed; stopping rather than sharing controls between players");
         MessageBoxW(nullptr, L"Local co-op could not install input isolation. Remove other input mods and retry.", L"SA:COOP", MB_ICONERROR);

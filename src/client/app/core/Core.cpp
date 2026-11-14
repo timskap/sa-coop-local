@@ -60,26 +60,42 @@ uint32_t g_frameNo = 0;
 std::string g_redirectPath;  // ANSI path; when set, slot kRedirectSlot maps to this file
 std::string g_snapshotPath, g_saveLoadError;
 bool g_saveRedirectReady = false;
-using GenFilenameFn = void(__fastcall*)(void*, void*, int, char*);
-GenFilenameFn g_origGenerateGameFilename = nullptr;
+using CheckDataFn = bool(__cdecl*)(int, char*);
+CheckDataFn g_origCheckData = nullptr;
+bool g_validatingSave = false;
+int g_nativeSaveError = 0;
+unsigned g_saveOpenAttempts = 0, g_saveOpenSuccesses = 0;
 using OpenFileFn = void*(__cdecl*)(const char*, const char*);
 OpenFileFn g_origOpenFile = nullptr;
 using OpenWriteFn = void*(__cdecl*)(const char*);
 OpenWriteFn g_origOpenWrite = nullptr;
 
 void* __cdecl HookOpenFile(const char* path, const char* mode) {
-    return g_origOpenFile(savefile::Resolve(path, g_redirectPath, g_snapshotPath), mode);
+    const char* resolved = savefile::Resolve(path, g_redirectPath, g_snapshotPath);
+    void* file = g_origOpenFile(resolved, mode);
+    if (g_validatingSave) {
+        ++g_saveOpenAttempts;
+        if (file) ++g_saveOpenSuccesses;
+        LOGI("Save open: requested '%s', resolved '%s', mode '%s', success %d, Windows error %lu",
+             path ? path : "(null)", resolved ? resolved : "(null)", mode ? mode : "(null)", file != nullptr,
+             file ? 0UL : GetLastError());
+    }
+    return file;
 }
 void* __cdecl HookOpenWrite(const char* path) {
     return g_origOpenWrite(savefile::Resolve(path, g_redirectPath, g_snapshotPath));
 }
 
-void __fastcall HookGenerateGameFilename(void* self, void* edx, int slot, char* out) {
-    if (slot == flow::kRedirectSlot && !g_redirectPath.empty()) {
-        strcpy(out, savefile::kLoadToken);
-        return;
+bool __cdecl HookCheckData(int slot, char* filename) {
+    const bool valid = g_origCheckData(slot, filename);
+    if (g_validatingSave) {
+        // CheckSlotDataValid overwrites this with 7 on failure. Preserve the actual I/O error.
+        g_nativeSaveError = game::Ref<int32_t>(0xC17034);
+        LOGI("Native save check: valid %d, original error %d, file size %u, read position %u, buffer %u, failed %u",
+             valid, g_nativeSaveError, game::Ref<uint32_t>(0xC16EF8), game::Ref<uint32_t>(0xC16EF4),
+             game::Ref<uint32_t>(0x8D2BE0), game::Ref<uint8_t>(0xC16EFC));
     }
-    g_origGenerateGameFilename(self, edx, slot, out);
+    return valid;
 }
 
 void CommonFrame();
@@ -578,25 +594,23 @@ std::wstring UserFilesDir() {
 std::wstring SlotPath(int slot) { return UserFilesDir() + L"GTASAsf" + std::to_wstring(slot) + L".b"; }
 
 static std::string ToAnsiPath(const std::wstring& w) {
-    BOOL bad = FALSE;
-    int n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), -1, nullptr, 0, nullptr, &bad);
-    std::string s(n, '\0');
-    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), -1, s.data(), n, nullptr, &bad);
-    s.resize(strlen(s.c_str()));
-    if (bad) {
-        // Try the 8.3 alias, but verify that it really is representable in this code page.
-        wchar_t shortPath[MAX_PATH];
-        const DWORD length = GetShortPathNameW(w.c_str(), shortPath, MAX_PATH);
-        if (length && length < MAX_PATH) {
-            bad = FALSE;
-            n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, shortPath, -1, nullptr, 0, nullptr, &bad);
-            s.assign(n, '\0');
-            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, shortPath, -1, s.data(), n, nullptr, &bad);
-            s.resize(strlen(s.c_str()));
-        }
-        if (bad) return {};  // never load a different '?' path after a lossy conversion
-    }
-    return s;
+    auto convert = [](const wchar_t* path) -> std::string {
+        BOOL bad = FALSE;
+        const bool utf8 = GetACP() == CP_UTF8;
+        const DWORD flags = utf8 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
+        BOOL* substituted = utf8 ? nullptr : &bad;
+        const int n = WideCharToMultiByte(CP_ACP, flags, path, -1, nullptr, 0, nullptr, substituted);
+        if (n <= 1 || bad) return {};
+        std::string value(n, '\0');
+        if (!WideCharToMultiByte(CP_ACP, flags, path, -1, value.data(), n, nullptr, substituted) || bad) return {};
+        value.resize(n - 1);
+        return value;
+    };
+    std::string path = convert(w.c_str());
+    if (!path.empty()) return path;
+    wchar_t shortPath[MAX_PATH]{};
+    const DWORD length = GetShortPathNameW(w.c_str(), shortPath, MAX_PATH);
+    return length && length < MAX_PATH ? convert(shortPath) : std::string{};
 }
 
 // The game opens its files by relative paths (CGame::Init2 reads ANIM\PED.IFP and crashes in RwStreamRead when it
@@ -629,19 +643,41 @@ bool LoadSaveFile(const std::wstring& path) {
     if (!savefile::Valid(bytes))
         return fail(TR("Контрольная сумма сохранения неверна: файл повреждён или записан не полностью",
                        "The save checksum is invalid: the file is damaged or incomplete"));
-    g_redirectPath = ToAnsiPath(path);
+    std::wstring loadPath = path;
+    if (bytes.size() % 4) {
+        const size_t originalSize = bytes.size();
+        savefile::Align(bytes);  // checksum was already verified; never repair a corrupt save
+        EnsureDirectory(Cfg().dataDir + L"world");
+        loadPath = Cfg().dataDir + L"world\\load_aligned.b";
+        if (!WriteFileBytes(loadPath, bytes.data(), bytes.size()))
+            return fail(TR("Не удалось записать выровненную копию сохранения", "Could not write the aligned save copy"));
+        LOGI("Aligned save copy: %u -> %u bytes; original file unchanged", (unsigned)originalSize, (unsigned)bytes.size());
+    }
+    g_redirectPath = ToAnsiPath(loadPath);
     if (g_redirectPath.empty())
         return fail(TR("GTA не может прочитать символы в пути к сохранению", "GTA cannot represent the save-file path"));
     const uintptr_t mm = game::addr::MenuManager;
     int32_t& error = game::Ref<int32_t>(0xC17034);  // C_PcSave::error
     LOGI("Validating save: %u bytes, path %u bytes via %s, previous storage error %d",
          (unsigned)bytes.size(), (unsigned)g_redirectPath.size(), savefile::kLoadToken, error);
-    // CGenericGameStorage::CheckSlotDataValid(slot) — reads the file through GenerateGameFilename
-    bool valid = savefile::Validate(error, [] { return game::Call<0x5D1380, bool>(flow::kRedirectSlot); });
+    bool valid = false;
+    g_nativeSaveError = -1;
+    g_saveOpenAttempts = g_saveOpenSuccesses = 0;
+    {
+        // Leave GenerateGameFilename's native ABI and extension handling untouched. Its prefix
+        // is short only during validation; both 104-byte load buffers keep the resulting alias.
+        static_assert(flow::kRedirectSlot == 7);
+        savefile::ScopedLoadPrefix prefix(game::Ref<char[260]>(0xC16F18));
+        g_validatingSave = true;
+        valid = savefile::Validate(error, [] { return game::Call<0x5D1380, bool>(flow::kRedirectSlot, false); });
+        g_validatingSave = false;
+    }
     if (!valid) {
-        LOGE("Native save validation failed: storage error %d, path %s", error, g_redirectPath.c_str());
-        return fail(TR("GTA не смогла открыть или проверить сохранение; подробности в local.log",
-                       "GTA could not open or validate the save; see local.log for details"));
+        LOGE("Native save validation failed: storage error %d, original error %d, opens %u/%u, path %s",
+             error, g_nativeSaveError, g_saveOpenSuccesses, g_saveOpenAttempts, g_redirectPath.c_str());
+        return fail(Format(TR("GTA отклонила сохранение (код %d, причина %d, открыто %u/%u); см. local.log",
+                              "GTA rejected the save (code %d, detail %d, opened %u/%u); see local.log"),
+                           error, g_nativeSaveError, g_saveOpenSuccesses, g_saveOpenAttempts).c_str());
     }
     game::Ref<uint8_t>(mm + 0x15F) = (uint8_t)flow::kRedirectSlot;  // m_SelectedSlot
     if (!game::Ref<uint8_t>(mm + 0xE9)) {                            // !m_bMainMenuSwitch -> in game
@@ -714,6 +750,16 @@ bool SaveWorldSnapshot(std::vector<uint8_t>& out) {
         out.clear();
         return false;
     }
+    if (out.size() % 4) {
+        const size_t originalSize = out.size();
+        savefile::Align(out);
+        if (!WriteFileBytes(tmp, out.data(), out.size())) {
+            LOGE("Could not write the aligned snapshot");
+            out.clear();
+            return false;
+        }
+        LOGI("Aligned host snapshot: %u -> %u bytes", (unsigned)originalSize, (unsigned)out.size());
+    }
     return true;
 }
 
@@ -769,11 +815,10 @@ void Init(void* hModule) {
     mem::RedirectCallFn(0x53E87D, &HookEndUpdateMenu, &g_origEndUpdateMenu);      // FrontendIdle -> RwCameraEndUpdate
     mem::HookFn(0x58D490, &HookHudAfterFade, &g_origHudAfterFade, "CHud::DrawAfterFade");
     mem::RedirectCallFn(0x53E4FA, &HookRadioName, &g_origRadioName);  // Render2dStuff -> DisplayRadioStationName
-    const bool filenameHook = mem::HookFn(0x6190A0, &HookGenerateGameFilename, &g_origGenerateGameFilename,
-                                         "C_PcSave::GenerateGameFilename");
+    const bool checkHook = mem::HookFn(0x5D1170, &HookCheckData, &g_origCheckData, "CGenericGameStorage::CheckDataNotCorrupt");
     const bool openHook = mem::HookFn(0x538900, &HookOpenFile, &g_origOpenFile, "CFileMgr::OpenFile (save redirection)");
     const bool writeHook = mem::HookFn(0x538910, &HookOpenWrite, &g_origOpenWrite, "CFileMgr::OpenFileForWriting (save redirection)");
-    g_saveRedirectReady = filenameHook && openHook && writeHook;
+    g_saveRedirectReady = checkHook && openHook && writeHook;
     mem::HookFn(0x53C550, &HookShutDownForRestart, &g_origShutDownForRestart, "CGame::ShutDownForRestart");
     mem::HookFn(0x53C680, &HookInitialiseWhenRestarting, &g_origInitWhenRestarting, "CGame::InitialiseWhenRestarting");
 
