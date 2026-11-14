@@ -20,3 +20,10 @@ open F10 → Saves / Logs and capture both player logs plus `player2/world/partn
 
 Automated checks cover input mappings, save aliases/alignment, native launcher controls and real Win32 dummy game/server
 processes, including embedded layouts, focus and shutdown. They do not run GTA or test physical controllers.
+
+This is the unchanged archive from the [successful Windows build](https://github.com/timskap/sa-coop-local/actions/runs/43604945729)
+of commit `c4aa144ff3131dbdeb5d648d2be7be8e554c08f9`. Full compilation, FSD/i18n checks, portable regressions, launcher smoke
+and session integration checks passed. The small CI display exercised horizontal fullscreen and rejection of an undersized
+vertical layout; both split calculations are covered by portable tests. `SHA256SUMS.txt` contains the archive checksum.
+
+[Setup and testing notes](https://github.com/timskap/sa-coop-local/blob/c4aa144ff3131dbdeb5d648d2be7be8e554c08f9/docs/LOCAL_COOP.md)
