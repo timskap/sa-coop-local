@@ -19,6 +19,10 @@ namespace coop::localinput {
 namespace {
 using UpdateFn = void(__fastcall*)(game::CPad*, void*, int);
 UpdateFn original = nullptr;
+using MenuProcessFn = void(__fastcall*)(void*, void*);
+MenuProcessFn originalMenu = nullptr;
+PadRouter router;
+bool pendingEscape = false;
 using InputCreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, void**, IUnknown*);
 using DeviceCreateFn = HRESULT(WINAPI*)(void*, REFGUID, void**, IUnknown*);
 using CooperativeFn = HRESULT(WINAPI*)(void*, HWND, DWORD);
@@ -62,15 +66,29 @@ bool SessionFocused() {
     if (foreground == static_cast<HWND>(game::GameWindow())) return true;
     return Cfg().localSession && reinterpret_cast<uintptr_t>(GetPropW(foreground, kSessionProperty)) == Cfg().localSession;
 }
-game::CControllerState Controller() {
-    game::CControllerState s{};
+game::CControllerState Controller(bool captured) {
     XINPUT_STATE input{};
-    if (!HasInputFocus() || local::ReadPad(Cfg().localDevice, input) != ERROR_SUCCESS) return s;
+    const bool connected = local::ReadPad(Cfg().localDevice, input) == ERROR_SUCCESS;
+    const bool enabled = connected && HasInputFocus() && !captured;
     const auto& p = input.Gamepad;
+    const bool menu = game::MenuActive();
+    const auto routed = router.Update({p.wButtons, p.bLeftTrigger, p.bRightTrigger,
+                                      p.sThumbLX, p.sThumbLY, p.sThumbRX, p.sThumbRY}, enabled, menu);
+    if (!enabled) pendingEscape = false;
+    else pendingEscape = pendingEscape || routed.escape;
     auto* ped = game::FindPlayerPed();
-    return MapGamepad({p.wButtons, p.bLeftTrigger, p.bRightTrigger,
-                       p.sThumbLX, p.sThumbLY, p.sThumbRX, p.sThumbRY},
-                      ped && ped->InVehicle() && !game::MenuActive());
+    return MapGamepad(routed.sample, ped && ped->InVehicle(), menu);
+}
+void __fastcall ProcessMenu(void* menu, void* edx) {
+    const bool escape = pendingEscape && HasInputFocus() && !ui::In().KeyboardCaptured();
+    pendingEscape = false; // one native menu call per physical press, not per query of Esc
+    if (!escape) return originalMenu(menu, edx);
+    // CKeyboardState: 12 int16 F-keys + 256 int16 standard keys, then esc.
+    constexpr uintptr_t kEscapeOffset = (12 + 256) * sizeof(int16_t);
+    MenuEscapeScope press(game::Ref<int16_t>(game::addr::NewKeyState + kEscapeOffset),
+                          game::Ref<int16_t>(game::addr::OldKeyState + kEscapeOffset));
+    LOGD("Local controller: Menu/View/B routed to this player's native menu");
+    originalMenu(menu, edx);
 }
 void __fastcall Update(game::CPad* pad, void* edx, int number) {
     // Hook before GTA reconciles input, so OldState, horn/steering histories and JustDown stay coherent.
@@ -78,6 +96,7 @@ void __fastcall Update(game::CPad* pad, void* edx, int number) {
     auto& joystick = game::Field<game::CControllerState>(pad, 0xA8);
     auto& mouse = game::Field<game::CControllerState>(pad, 0xD8);
     const bool captured = ui::In().KeyboardCaptured();
+    const auto controller = pad == game::GetPad(0) && UsesGamepad() ? Controller(captured) : game::CControllerState{};
     if (pad != game::GetPad(0) || captured || Cfg().localDevice == -2) {
         keyboard = joystick = mouse = {};
     } else if (Cfg().localDevice == -1) {
@@ -86,7 +105,7 @@ void __fastcall Update(game::CPad* pad, void* edx, int number) {
         if (!HasInputFocus()) keyboard = mouse = {};
     } else {
         keyboard = mouse = {};
-        joystick = Controller();
+        joystick = controller;
         game::Field<int16_t>(pad, 0x10A) = 0;  // classic GTA controls, not a saved alternate layout
         game::cam::UseMouse3rdPerson() = 0;
     }
@@ -152,6 +171,11 @@ void RegisterWindow(void* window) {
 }
 void Install() {
     if (!Cfg().localCoop) return;
+    if (Cfg().localDevice >= 0 &&
+        !mem::HookFn(0x57B440, &ProcessMenu, &originalMenu, "CMenuManager::Process (local controller menu)")) {
+        LOGE("Cannot install local controller menu support");
+        TerminateProcess(GetCurrentProcess(), 4);
+    }
     if (Cfg().localContainer) {
         HMODULE input = LoadLibraryW(L"dinput8.dll");
         auto* create = input ? reinterpret_cast<void*>(GetProcAddress(input, "DirectInput8Create")) : nullptr;
