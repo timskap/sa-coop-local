@@ -136,7 +136,14 @@ int wmain(int argc, wchar_t** argv) {
         for (int attempt = 0; attempt < (crash ? 1 : 2); ++attempt) {
             setup.horizontal = attempt == 0;
             for (const char* file : {"p1.pid", "p2.pid", "server.pid", "allow-host"}) fs::remove(fs::path(root) / file);
-            Check(session.Start(setup, -1), "Session start failed");
+            const auto requested = local::Split(GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), setup.horizontal);
+            if (requested[0].width < 640 || requested[0].height < 360) {
+                Check(!session.Start(setup, -1) && !session.Active() && !session.ContainerWindow(),
+                      "Unsupported monitor size must reject the layout and clean up its container");
+                std::cout << "Display is too small for vertical GTA viewports; rejection checked, restarting horizontally\n";
+                setup.horizontal = true;
+            }
+            if (!session.Start(setup, -1)) throw std::runtime_error("Session start failed: " + WideToUtf8(session.Status()));
             Until([&] { session.Tick(); return Pid(fs::path(root) / "p1.pid") != 0; }, "P1 never started");
             for (int i = 0; i < 15; ++i) { session.Tick(); Pump(); Sleep(20); }
             Check(!fs::exists(fs::path(root) / "p2.pid"), "P2 started before host readiness (or reused stale event)");
